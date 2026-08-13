@@ -60,6 +60,15 @@ class ArtifactStore:
         except ResourceExistsError:
             pass
 
+    def close(self) -> None:
+        """Release the underlying HTTP session. Call once, at shutdown.
+
+        The CLI (``app/main.py``) never calls this — a short-lived process
+        exiting cleans up its own sockets — but the web API's ``lifespan``
+        does, since a long-running server should release what it opened.
+        """
+        self.service.close()
+
     def save(
         self,
         artifact: StoredArtifact,

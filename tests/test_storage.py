@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+from azure.storage.blob import BlobServiceClient
+
 from app.models import (
     RequirementsArtifact,
     StoredArtifact,
@@ -63,3 +65,25 @@ def test_save_uploads_json(
     )
 
     blob.upload_blob.assert_called_once()
+
+
+@patch("app.storage.BlobServiceClient")
+def test_close_closes_the_underlying_blob_service_client(
+    mock_blob_service: MagicMock,
+) -> None:
+    """close() must call a method that actually exists on BlobServiceClient.
+
+    Uses ``spec=BlobServiceClient`` (via autospec on the class) so that if
+    ``close()`` ever called something the real SDK doesn't expose, the test
+    would fail the same way the real client would — see the equivalent
+    regression test in test_session_store.py for why that distinction
+    matters (a plain MagicMock would accept any call silently).
+    """
+    mock_blob_service.from_connection_string.return_value = MagicMock(
+        spec=BlobServiceClient
+    )
+
+    store = ArtifactStore("test-connection", "requirements", environment="dev")
+    store.close()
+
+    store.service.close.assert_called_once()  # type: ignore[attr-defined]

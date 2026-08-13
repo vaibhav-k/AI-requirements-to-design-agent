@@ -8,10 +8,14 @@ version = "0.2.0"
 description = "AI agent that transforms software requirements into high-level system architecture."
 requires-python = ">=3.11"
 
+[tool.pyright]
+ignoreMissingImports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-ra"
+asyncio_mode = "auto"
 
 [tool.mypy]
 python_version = "3.14"
@@ -32,3 +36,18 @@ select = ["E", "F", "I", "B", "UP"]
 [[tool.mypy.overrides]]
 module = ["graphviz"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# azure-cosmos and azure-identity ship no inline types/py.typed marker, so
+# strict mode would otherwise flag every call into them (create_item,
+# CosmosResourceNotFoundError, ManagedIdentityCredential, ...) as untyped.
+module = ["azure.cosmos", "azure.cosmos.*", "azure.identity", "azure.identity.*"]
+ignore_missing_imports = true
+disallow_untyped_calls = false
+
+[[tool.mypy.overrides]]
+# msal (used only by scripts/get_dev_token.py, a manual-testing helper —
+# not imported by the app itself) ships no py.typed marker either.
+module = ["msal"]
+ignore_missing_imports = true
+disallow_untyped_calls = false

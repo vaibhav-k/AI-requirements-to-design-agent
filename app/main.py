@@ -1,3 +1,16 @@
+"""
+This module provides a command-line interface (CLI) for the AI Requirements → System
+Design Agent. It allows users to input system requirements, analyze them, and generate
+a high-level system architecture.
+
+To run the CLI, execute this script in a terminal.
+The user will be prompted to describe the system they want to build,
+and the agent will analyze the requirements and generate a system design.
+
+To use the web interface, run uvicorn app.web.main:app --reload
+Navigate to http://127.0.0.1:8000/docs to get the Swagger UI for the API endpoints.
+"""
+
 from __future__ import annotations
 
 from app.analyzer import RequirementsAnalyzer
