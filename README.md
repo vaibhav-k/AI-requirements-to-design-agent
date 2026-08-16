@@ -21,29 +21,49 @@ The application now implements the MVP-2 architecture pipeline with the followin
 * Requirement-to-interface traceability
 * External dependency modeling
 * Architecture versioning
+* Architecture refinement — an accepted architecture can be iterated on
+  with new free-text input instead of only being generated once; see the
+  "MCP" and endpoint sections below
 * Graphviz architecture diagrams
 * SVG diagram generation
 * External dependencies represented in architecture diagrams
 * Stronger failure handling around architecture generation and validation
 * Azure Blob Storage for architecture artifacts
-* MCP architecture adapter
+* MCP adapter covering the full requirements-to-architecture flow —
+  `analyze_requirements`/`refine_requirements`,
+  `generate_system_design`/`refine_architecture`/`validate_system_design`,
+  `generate_architecture_diagram` — usable end to end through MCP alone;
+  see the "MCP" section below
 * Automated tests
 * mypy type checking
 * Ruff linting
-* GitHub Actions CI (`ruff` + `mypy --strict` + `pytest` on every push/PR)
+* GitHub Actions CI (`ruff` + `mypy --strict` + `pytest` on every push/PR) —
+  the workflow file (`.github/workflows/ci.yml`) is currently `.gitignore`d
+  and runs locally/on-demand only, not on the actual GitHub remote yet; see
+  the note in "Project Structure" for why
 * FastAPI web layer with Entra ID (Azure AD) bearer-token authentication
 * Cosmos DB-backed session state for the web API (`CosmosSessionStore`)
 * Requirements → architecture flow exposed over HTTP
-  (`/requirements-runs` start/refine/accept, plus listing a caller's own
-  sessions), mirroring the CLI's Accept/Refine loop, with per-user
-  ownership enforcement
-* A double-submit guard on `accept` — a transitional `"generating"` stage
-  plus a Cosmos ETag/if-match condition on the upsert — so both a retried
-  request and a genuinely concurrent one get an immediate `409` instead of
-  racing (or re-running) the generation pipeline
+  (`/requirements-runs` start/refine/accept/refine-architecture, plus
+  listing a caller's own sessions), mirroring (and, for
+  refine-architecture, extending beyond) the CLI's Accept/Refine loop, with
+  per-user ownership enforcement
+* A double-submit guard on both `accept` and `refine-architecture` — a
+  transitional `"generating"` stage plus a Cosmos ETag/if-match condition
+  on the upsert — so both a retried request and a genuinely concurrent one
+  get an immediate `409` instead of racing (or re-running) the generation
+  pipeline
 * Interactive Swagger UI (`/docs`) and a device-code token-acquisition
   script (`scripts/get_dev_token.py`) for manual testing
 * Graceful shutdown of both the Cosmos and Blob Storage clients on server stop
+* A React + Vite + TypeScript frontend (`frontend/`) built as a chat-first
+  artifact explorer: sign in (or run anonymously against
+  `AUTH_ENABLED=false`), a Conversation panel driving
+  start/refine/accept/refine-architecture with explicit
+  Loading/Processing/Ready/Error states, and a Requirements/Architecture
+  artifact panel with version switching, side-by-side version compare, and
+  an interactive (zoom/pan/click-to-inspect) diagram viewer — see the
+  Frontend section below
 
 The architecture stage intentionally focuses on **logical, high-level system components**.
 
@@ -107,11 +127,24 @@ architecture pipeline, secured with Entra ID (Azure AD).
     generation already in flight); `422` if generation/validation fails —
     the session reverts to `"requirements"` so accept can be retried, and
     its `error` field is set.
+  * `POST /requirements-runs/{id}/refine-architecture` — the architecture
+    analogue of `refine`: bumps `design_version` and re-generates with the
+    previous design as context (`SystemDesignAnalyzer.analyze`'s
+    `previous_design`/`refinement_input`), preserving components,
+    interfaces, and external dependencies that are still valid rather than
+    regenerating from scratch. Unlike `refine`, this is only valid *after*
+    `accept` — `409` unless the session is already in the `"architecture"`
+    stage — and it can be called repeatedly, each call producing a new
+    design version on top of the last. `422` if generation/validation
+    fails — the session reverts to `"architecture"` (not `"requirements"`;
+    the previous design is still valid and still what's persisted) so
+    refinement can be retried, and its `error` field is set.
 
-  **On double-submission:** `accept` upserts the session with
-  `stage="generating"` *before* starting the expensive work (AI generation
-  + validation + diagram render + two Blob writes), so a sequential retry
-  gets an immediate `409` rather than re-running the whole pipeline. That
+  **On double-submission:** `accept` and `refine-architecture` both upsert
+  the session with `stage="generating"` *before* starting the expensive work
+  (AI generation + validation + diagram render + two Blob writes), so a
+  sequential retry (or a concurrent second call to either route) gets an
+  immediate `409` rather than re-running the whole pipeline. That
   upsert is also conditional on the record's Cosmos `_etag` — `SessionRecord`
   carries the `_etag` of whatever it was last read with
   (`CosmosSessionStore.get`/`create`/`upsert` all populate it), and
@@ -125,11 +158,35 @@ architecture pipeline, secured with Entra ID (Azure AD).
   separate reservation record. A record that's never round-tripped through
   Cosmos (`etag` still `None`) writes unconditionally, same as before this
   existed.
+* `app/api/routes/artifacts.py` — read-only access to *historical* artifact
+  content, as a separate router from `requirements.py` (which only ever
+  tracks a session's *current* state). Blob names in `ArtifactStore` are
+  already deterministic and version-embedded
+  (`{env}/{session_id}/requirements/v{n}.json`,
+  `{env}/{session_id}/design/v{n}.json`/`.svg`), and design blobs are
+  written with `overwrite=False`, so every version ever persisted was
+  already sitting in Blob Storage — this router just exposes it:
+  * `GET /requirements-runs/{id}/requirements/versions` — the list of
+    requirements version numbers that exist for this session, ascending.
+  * `GET /requirements-runs/{id}/requirements/{version}` — that version's
+    `RequirementsArtifact`, unwrapped from the stored envelope.
+  * `GET /requirements-runs/{id}/architecture/versions` — same, for design
+    versions.
+  * `GET /requirements-runs/{id}/architecture/{version}` — that version's
+    `SystemDesignArtifact`.
+  * `GET /requirements-runs/{id}/architecture/{version}/diagram` — that
+    version's persisted Graphviz SVG, as `image/svg+xml`.
+
+  Every route runs the same ownership check as `requirements.py`
+  (`load_owned` — 404, never 403, for a session that's missing or belongs
+  to someone else) before touching Blob Storage. A missing version (never
+  persisted, or since deleted) is a 404; a blob that fails to parse as the
+  expected model is a 500 rather than a silently wrong 200.
 * `app/web/main.py` — the FastAPI app itself: CORS middleware, a public
   `/health` liveness probe, a `/me` endpoint that proves the auth wiring
   works end-to-end, a `lifespan` that starts the Cosmos session store and
-  the Blob artifact store once at startup, and the `requirements` router
-  registered with `dependencies=[Depends(require_user)]`.
+  the Blob artifact store once at startup, and the `requirements` and
+  `artifacts` routers registered with `dependencies=[Depends(require_user)]`.
 
 **Graceful shutdown:** on `Ctrl+C`, a `--reload` restart, or a real
 `SIGTERM`, the `lifespan`'s `finally` block closes both the Cosmos session
@@ -199,6 +256,10 @@ curl -X POST http://localhost:8000/requirements-runs/<session_id>/refine \
 
 curl -X POST http://localhost:8000/requirements-runs/<session_id>/accept
 
+curl -X POST http://localhost:8000/requirements-runs/<session_id>/refine-architecture \
+  -H "Content-Type: application/json" \
+  -d '{"input": "Add a notifications component for due-date reminders."}'
+
 curl http://localhost:8000/requirements-runs/<session_id>
 
 # List the caller's own sessions (returns [] when AUTH_ENABLED=false, since
@@ -250,7 +311,25 @@ endpoints by hand, no `curl`/PowerShell quoting involved at all:
    already-accepted session) returns `409` rather than running the pipeline
    again.
 
-5. **List your sessions** (optional). Expand `GET /requirements-runs`, "Try
+5. **Refine the architecture** (optional). Expand
+   `POST /requirements-runs/{session_id}/refine-architecture`, "Try it
+   out", paste the same `session_id`, and put something like this in the
+   body:
+
+   ```json
+   {
+     "input": "Add a notifications component for due-date reminders."
+   }
+   ```
+
+   Execute — `design_version` should bump to `2`, `stage` stays
+   `"architecture"`, and the new `design` should reflect the requested
+   change while keeping the previous components/interfaces intact. This
+   can be called again on the result to layer further changes on top; it
+   only 409s if the session isn't in the `"architecture"` stage yet, or a
+   refine/accept is already in flight.
+
+6. **List your sessions** (optional). Expand `GET /requirements-runs`, "Try
    it out", Execute — with `AUTH_ENABLED=true` and a real token supplied via
    Authorize (see below), this returns every session you've started, newest
    first. With `AUTH_ENABLED=false` it always returns `[]`, since sessions
@@ -351,6 +430,152 @@ typical SPA-plus-API setup would split those across two registrations.
 | `AADSTS90002` | Tenant not found | Double-check `ENTRA_TENANT_ID` against the Overview page |
 | `AADSTS650057` | Azure CLI's own client isn't authorized for this resource | Only relevant to `az account get-access-token`, not `get_dev_token.py` — use the script instead, or authorize Azure CLI (`04b07795-8ddb-461a-bbee-02f9e1bf7b46`) under Expose an API → Authorized client applications |
 
+---
+
+## Frontend
+
+`frontend/` is a React + Vite + TypeScript app built as a chat-first
+artifact explorer, not an artifact generator: it renders exactly what the
+backend has persisted for a session and its accompanying versions, and
+never fabricates requirements, architecture, IDs, diagrams, or version
+history of its own. It replaces Swagger UI and `scripts/get_dev_token.py`
+as the way to actually *use* the API day to day — those remain useful for
+quick manual API testing, but aren't a product surface.
+
+**Layout — three connected areas:**
+
+* **Sidebar** (`Sidebar.tsx`) — the caller's own sessions
+  (`GET /requirements-runs`) plus "New session".
+* **Conversation** (`Workspace.tsx` + `Conversation.tsx`) — the AI
+  interaction layer. Starting a session, refining requirements, accepting
+  them to generate an architecture, and refining that architecture are all
+  driven from here as a chat transcript; every entry reflects something the
+  backend actually did (a persisted requirements/design summary, or a real
+  error), never fabricated conversational filler. A status pill shows
+  **Loading** (fetching an existing session), **Processing** (a
+  refine/accept/refine-architecture request is in flight — each backend
+  call is a single synchronous request, so this spans the whole wait rather
+  than faking granular progress), **Ready**, or **Error**. Once a session
+  reaches the `"architecture"` stage, further chat input is routed to
+  `POST .../refine-architecture` instead of `refine` — `Workspace.tsx`'s
+  `handleSend` branches on `run.stage` the same way it already branched on
+  "no session yet" vs. "requirements stage". Both `.../accept` and
+  `.../refine-architecture` failures are read directly off the backend's
+  error text to tell an architecture *validation* failure
+  (`DesignGenerationWorkflowError`'s "Architecture validation failed: ...")
+  from a generation failure, rather than guessing. A session stuck in the
+  transient `"generating"` stage (a refine/accept already in flight) still
+  has chat input rejected client-side with an explanatory message rather
+  than silently hitting the backend's `409` — see the "Recover sessions
+  stuck on `generating`" limitation above, which this doesn't solve.
+* **Artifacts** (`ArtifactPanel.tsx`) — tabs for Requirements and
+  Architecture, each backed by `app/api/routes/artifacts.py`:
+  * `RequirementsView.tsx` — summary, business goal, actors,
+    functional/non-functional requirements, data/integration requirements,
+    constraints, assumptions, and open questions, with IDs, for the
+    selected version.
+  * `ArchitectureView.tsx` — components, interfaces, external dependencies,
+    open questions, and a requirement-traceability section built purely
+    from each component's/interface's own `requirement_ids` (never
+    invented), plus `DiagramViewer.tsx` rendering the persisted Graphviz SVG
+    with wheel-to-zoom, drag-to-pan, and click-to-inspect (clicking a node
+    reads its Graphviz `<title>`, which is the component id, and
+    highlights the matching entry in the list above).
+  * `VersionBar.tsx` — switch which persisted version is shown, and
+    optionally pick a second version to compare against.
+  * When a compare version is selected, both views switch to a
+    side-by-side field diff (`lib/diff.ts`'s `diffByKey`/`diffStringList` +
+    `DiffList.tsx`) — added/removed/changed entries are tagged and shown
+    before/after, for every list field on both artifacts.
+
+**Other pieces:**
+
+* Sign-in via MSAL (`@azure/msal-browser` + `@azure/msal-react`), or an
+  explicit "Continue without signing in" path for a backend running with
+  `AUTH_ENABLED=false`.
+* A typed API client (`src/api.ts`) that acquires a token silently per
+  request (falling back to a popup only when `acquireTokenSilent` needs
+  interaction) and surfaces the backend's `detail` message on any error.
+* Visual style deliberately borrows the *restraint* of a clean,
+  chat-first, whitespace-generous layout — not a literal skin of any
+  particular product's brand colors or typography.
+
+**What's deliberately not covered yet:** polling for sessions stuck on
+`"generating"` (see "Recover sessions stuck on `generating`" below), and
+any automated frontend tests.
+
+### Running it locally
+
+```bash
+cd frontend
+npm install
+cp .env.example .env   # then fill in the values — see below
+npm run dev
+```
+
+By default this runs on `http://localhost:5173`, which is already in the
+backend's `CORS_ALLOW_ORIGINS` default (`app/config.py`) — no CORS
+configuration needed for local dev as long as you haven't changed either
+side's default port.
+
+If you just want to click around without setting up sign-in yet, leave
+`.env` unfilled (or don't create it) and run the backend with
+`AUTH_ENABLED=false` (the default) — the app detects that Entra isn't
+configured and offers "Continue without signing in" instead of gating on
+sign-in.
+
+### Frontend: Entra ID App Registration
+
+The frontend needs its **own** app registration — separate from the
+backend API's — because a single-page app is a public client (no client
+secret, ever) that authenticates *end users*, while the existing
+registration doubles as both a client and the resource API it's requesting
+a token for (see the backend's Entra ID section above for why that one
+works differently). Reusing the API's client id here wouldn't work: its
+redirect URIs and platform type are configured for the device-code flow,
+not a browser sign-in redirect.
+
+1. **Register a new app**: Azure Portal → Microsoft Entra ID → App
+   registrations → New registration. Give it a distinct name (e.g.
+   `requirements-agent-frontend`) so it's not confused with the API
+   registration. Same tenant as the backend.
+
+2. **Platform configuration** (Authentication, left sidebar):
+   * **Add a platform** → **Single-page application**.
+   * **Redirect URI**: `http://localhost:5173` for local dev (Vite's
+     default port — matches `VITE_ENTRA_CLIENT_ID`'s redirect target). Add
+     `http://localhost:4173` too if you'll also test against `vite preview`.
+   * Leave "Allow public client flows" alone — that setting is for the
+     device-code flow the backend's registration uses, not the
+     authorization-code-with-PKCE flow MSAL uses for SPAs.
+
+3. **API permissions** (left sidebar) — this is what actually lets a
+   frontend-issued token be used against the backend API:
+   * **Add a permission** → **My APIs** → select the **backend's** app
+     registration (not this one) → **Delegated permissions** → check the
+     scope it exposes (`ENTRA_API_SCOPE`, default `access_as_user`) →
+     **Add permissions**.
+   * **Grant admin consent** for the tenant, same as the backend's setup —
+     without it, sign-in succeeds but the token request for that scope
+     fails with `AADSTS65001`.
+
+4. **Note the Application (client) ID** from this new registration's
+   Overview page, and the API's own client id (from the backend's
+   registration) to build the scope URI.
+
+5. **Fill in `frontend/.env`**:
+
+   ```dotenv
+   VITE_ENTRA_TENANT_ID=<same tenant id as the backend's ENTRA_TENANT_ID>
+   VITE_ENTRA_CLIENT_ID=<this new frontend app registration's client id>
+   VITE_API_SCOPE=api://<backend api's client id>/access_as_user
+   VITE_API_BASE_URL=http://localhost:8000
+   ```
+
+6. Restart `npm run dev` (Vite only reads `.env` at startup) and set
+   `AUTH_ENABLED=true` on the backend, then restart it too. "Sign in" in
+   the frontend should now complete a full round trip.
+
 ### Next Development Steps
 
 **Recently closed:**
@@ -370,16 +595,24 @@ typical SPA-plus-API setup would split those across two registrations.
   double-submission" above. Both the sequential-retry case (immediate
   `409`) and the genuinely concurrent case (Cosmos ETag/`if-match`
   conflict, surfaced as `409` too) are handled now.
+* ~~A real frontend~~ — a first pass, not the final word: React + Vite +
+  TypeScript, MSAL sign-in (or anonymous mode against
+  `AUTH_ENABLED=false`), covering
+  start/list/refine/accept/refine-architecture end to end.
+* ~~Frontend: fetch actual artifact content~~ — `app/api/routes/artifacts.py`
+  now exposes version lists and content (JSON + SVG) for both requirements
+  and architecture, and the frontend was rebuilt around it into the
+  chat-first workspace described in the Frontend section above: version
+  switching, side-by-side compare, and an interactive (zoom/pan/inspect)
+  diagram viewer. See "What's deliberately not covered yet" in that section
+  for what's still missing — mainly automated frontend tests.
 
 **Still open, roughly in the order it'd make sense to tackle it:**
 
-1. **A real frontend.** `scripts/get_dev_token.py` and Swagger UI are
-   testing conveniences, not a product surface. A minimal frontend using
-   MSAL.js to sign in and drive `/requirements-runs` (now including the
-   list endpoint, so it has something to show on load) would replace
-   both — and would be the point at which "Expose an API" needs a second,
-   frontend-specific redirect URI/app registration rather than reusing the
-   API's own client id the way the dev script does.
+1. **Frontend automated tests.** Nothing here yet — no Vitest/React
+   Testing Library setup, no component or `api.ts` tests. The backend's
+   testing bar (see "Testing" below) hasn't been applied to `frontend/` at
+   all yet.
 2. **Managed identity in production.** `COSMOS_AUTH_MODE=managed_identity`
    is already implemented in `CosmosSessionStore.start()` but never
    exercised — everything so far has run against `COSMOS_KEY`. Before this
@@ -388,8 +621,9 @@ typical SPA-plus-API setup would split those across two registrations.
    retrofit.
 3. **Deployment.** No `Dockerfile`, no infrastructure-as-code, no target
    platform decided (Azure Container Apps vs. App Service vs. something
-   else). Everything so far assumes `uvicorn` on a dev machine. CI now
-   proves the code works; it doesn't yet ship anywhere.
+   else). Everything so far assumes `uvicorn` on a dev machine (and now
+   `npm run dev` for the frontend). CI now proves the backend works; it
+   doesn't yet ship anywhere.
 4. **Observability.** Logging today is `logging.basicConfig(level=INFO)`
    plus whatever the Azure SDKs emit on their own (as seen in the verbose
    Cosmos/Blob request logs during startup). No request tracing, no
@@ -403,14 +637,18 @@ typical SPA-plus-API setup would split those across two registrations.
    this gets unified at some point.
 6. **Recover sessions stuck on `"generating"`.** If the process crashes
    between marking a session `"generating"` and either finishing or
-   reverting it, that session is stuck — `refine` and `accept` both refuse
-   anything not in `"requirements"` stage, with no path back. Not exercised
-   by any test today; worth a TTL-based recovery or an admin unstick
-   endpoint before this runs unattended for real users.
+   reverting it, that session is stuck — `refine`, `accept`, and
+   `refine-architecture` each refuse to run against a session already in
+   `"generating"`, with no path back. Not exercised by any test today;
+   worth a TTL-based recovery or an admin unstick endpoint before this runs
+   unattended for real users. The frontend's Conversation view has no
+   polling loop for this today either — see "What's deliberately not
+   covered yet" in the Frontend section.
 
-The pre-existing MVP-3/"Future" roadmap further down (architecture
-refinement, version comparison, ADRs, deployment architecture generation,
-etc.) is still the right next horizon for the *pipeline* itself — the list
+The pre-existing MVP-3/"Future" roadmap further down (version comparison,
+ADRs, deployment architecture generation, etc. — architecture refinement
+itself is now implemented, see the "MCP" and endpoint sections above) is
+still the right next horizon for the *pipeline* itself — the list
 above is specifically about hardening the *web API* built this round
 before building further on top of it.
 
@@ -529,11 +767,40 @@ requirements-agent/
 │   │   ├── dependencies.py
 │   │   └── routes/
 │   │       ├── __init__.py
-│   │       └── requirements.py
+│   │       ├── requirements.py
+│   │       └── artifacts.py
 │   │
 │   └── web/
 │       ├── __init__.py
 │       └── main.py
+│
+├── frontend/
+│   ├── src/
+│   │   ├── main.tsx
+│   │   ├── App.tsx
+│   │   ├── App.css
+│   │   ├── index.css
+│   │   ├── authConfig.ts
+│   │   ├── api.ts
+│   │   ├── types.ts
+│   │   ├── lib/
+│   │   │   └── diff.ts
+│   │   ├── hooks/
+│   │   │   └── useVersionedArtifact.ts
+│   │   └── components/
+│   │       ├── Sidebar.tsx
+│   │       ├── Workspace.tsx
+│   │       ├── Conversation.tsx
+│   │       ├── ArtifactPanel.tsx
+│   │       ├── RequirementsView.tsx
+│   │       ├── ArchitectureView.tsx
+│   │       ├── DiagramViewer.tsx
+│   │       ├── VersionBar.tsx
+│   │       ├── DiffList.tsx
+│   │       └── ErrorBanner.tsx
+│   ├── .env.example
+│   ├── package.json
+│   └── vite.config.ts
 │
 ├── scripts/
 │   └── get_dev_token.py
@@ -550,7 +817,8 @@ requirements-agent/
 │   ├── test_auth.py
 │   ├── test_web_main.py
 │   ├── test_session_store.py
-│   └── test_requirements_routes.py
+│   ├── test_requirements_routes.py
+│   └── test_artifacts_routes.py
 │
 ├── .github/
 │   └── workflows/
@@ -564,9 +832,14 @@ requirements-agent/
 ```
 
 `.github/workflows/ci.yml` runs `ruff check`, `mypy .` (strict), and
-`pytest -v` on every push/PR — a prior revision of this README (and the
-MVP-2 checklist below) had claimed this existed before it actually did;
-see "Next Development Steps" for that history.
+`pytest -v` on every push/PR — but it's currently listed in `.gitignore`
+(temporarily, while Azure AI Foundry access for CI's own Azure OpenAI
+credentials gets sorted out), so it exists on disk and runs fine locally
+but isn't tracked in git or active on the GitHub remote yet. Remove that
+`.gitignore` line (and commit the workflow file) once that's resolved. A
+prior revision of this README (and the MVP-2 checklist below) had claimed
+CI was fully set up before either of these gaps were closed; see "Next
+Development Steps" for that history.
 
 ---
 
@@ -591,7 +864,7 @@ Artifacts follow the structure:
 └── ...
 ```
 
-Requirements and architecture versions are associated with the same session, providing a foundation for design evolution and future version comparison.
+Requirements and architecture versions are associated with the same session. `app/api/routes/artifacts.py` exposes that version history over HTTP, and the frontend's `VersionBar`/`DiffList` components use it to switch between versions and show a side-by-side field diff — see the Frontend section above.
 
 ### Versioning principle
 
@@ -945,7 +1218,8 @@ This enables future features including:
 
 # Architecture Diagrams
 
-Architecture diagrams are generated using Graphviz.
+Architecture diagrams are generated using Graphviz (`app/design/diagram.py`,
+`ArchitectureDiagramGenerator`).
 
 The diagram generator converts:
 
@@ -963,6 +1237,38 @@ design/
 ├── v1.json
 └── v1.svg
 ```
+
+**Layout is deliberately compact, not exhaustive:**
+
+* Node boxes show only `{id}\n{name}` (e.g. `C-001` / `User Interaction
+  Component`) — the full responsibility/purpose text is left out of the box
+  on purpose, since it's already shown in the Requirements/Architecture text
+  panel (and in the frontend's `ArchitectureView.tsx`). It's still attached
+  to each node/edge as a Graphviz `tooltip`, which renders as a native
+  browser hover tooltip (`xlink:title`) without touching the node's own
+  `<title>` — the frontend's `DiagramViewer.tsx` click-to-inspect depends
+  on that `<title>` staying exactly the component id.
+* The graph is sized and laid out for a US Letter page in portrait
+  (`size="7.5,10"`, `rankdir="TB"`) with tight `nodesep`/`ranksep`, small
+  fonts (11pt nodes, 9pt edges), and no forced minimum box size. Components
+  and external dependencies are manually wrapped into fixed-width rows of
+  `ArchitectureDiagramGenerator.NODES_PER_ROW` (4 by default) using Graphviz
+  `rank=same` subgraphs chained top-to-bottom with invisible anchor edges,
+  rather than left to a plain topological layout — a plain layout puts one
+  node per rank along the flow direction, so a large design still produces
+  one long row (just rotated vertical instead of horizontal) regardless of
+  `rankdir`, which is what previously forced horizontal scrolling on bigger
+  architectures even with `ratio="compress"` (per the Graphviz docs,
+  `ratio="compress"` combined with `size` "does not necessarily result in a
+  layout satisfying the given size"). With row-wrapping, diagram *width*
+  stays fixed at the page width no matter how many components exist —
+  height grows instead, so larger designs page/scroll vertically rather
+  than horizontally. Real interface and dependency-usage edges are marked
+  `constraint="false"` so they render as directional arrows without fighting
+  the manually-imposed row order.
+* Component-to-external-dependency ("used by") edges are dashed and
+  dependency-colored, visually distinct from interface edges at a glance
+  rather than only distinguishable by reading their labels.
 
 Graphviz must be installed separately because the Python `graphviz` package invokes the Graphviz `dot` executable.
 
@@ -988,10 +1294,10 @@ Example:
         └── v2.svg
 ```
 
-This provides a foundation for:
+Artifact history and version comparison are already exposed and used —
+see `app/api/routes/artifacts.py` and the Frontend section above. This
+also provides a foundation for:
 
-* Artifact history
-* Version comparison
 * Design evolution
 * Future approval workflows
 * Architecture change tracking
@@ -1232,20 +1538,53 @@ Application services
         │
         ├── Requirements analysis
         ├── Requirements refinement
-        └── System design generation
+        ├── System design generation
+        └── System design refinement
 ```
 
 This prevents MCP-specific implementation details from leaking into the core requirements and design models.
 
-The MCP adapter can subsequently be extended with additional tools for:
+**Tools exposed today**, covering the full requirements-to-architecture
+flow end to end through MCP alone (no need to call the analyzers directly
+outside it):
 
-* Requirements analysis
-* Requirements refinement
-* Architecture generation
-* Architecture validation
-* Artifact retrieval
-* Version comparison
-* Traceability queries
+* `analyze_requirements(user_input)` — the entry point: free-text input in,
+  a structured `RequirementsArtifact` JSON out.
+* `refine_requirements(user_input, requirements_json)` — re-analyzes with
+  the previous artifact as context, same as the CLI's/web API's "Refine"
+  step.
+* `generate_system_design(requirements_json)` — generates a
+  `SystemDesignArtifact` from an accepted requirements artifact.
+* `refine_architecture(user_input, requirements_json, design_json)` —
+  re-generates with the previous design as context, same as the web API's
+  `refine-architecture` endpoint: still-valid components, interfaces, and
+  external dependencies are preserved rather than the architecture being
+  regenerated from scratch.
+* `validate_system_design(design_json)` — runs the same semantic
+  `ArchitectureValidator` used before persistence.
+* `generate_architecture_diagram(design_json)` — validates, then renders
+  the SVG diagram (same `ArchitectureDiagramGenerator` as the web API).
+* Resources: `requirements://schema` and `design://schema` — the JSON
+  Schema for each artifact type, so a client can introspect the shape it's
+  working with.
+
+This layer is deliberately stateless — every tool takes and returns JSON
+directly, with no session, persistence, or versioning of its own (that's
+`ArtifactStore`/`SessionStore`'s job on the web API side). The MCP adapter
+can subsequently be extended with additional tools for:
+
+* Artifact retrieval — reading already-persisted versions (mirroring
+  `app/api/routes/artifacts.py`) rather than only operating on JSON the
+  caller already has in hand.
+* Version comparison — the backend-computed structured diff itself now
+  exists as a web API route (`GET .../architecture/compare`, see "Next
+  Steps" → "Architecture Version Comparison"); it just isn't exposed as an
+  MCP tool yet, since MCP tools here are stateless and this reads
+  already-persisted versions the same way "Artifact retrieval" above
+  would.
+* Traceability queries — answering "which components/interfaces implement
+  requirement X" as a dedicated tool instead of requiring the caller to
+  walk `requirement_ids` themselves.
 
 ---
 
@@ -1307,13 +1646,16 @@ The test suite covers:
   when a record has no `etag`, passing it as an if-match condition when it
   does, capturing the new `etag` Cosmos returns, and translating a 412 into
   `SessionConflictError`)
-* The `/requirements-runs` start/list/refine/accept routes, via
-  `app.dependency_overrides` — no real Azure credentials needed. This
-  includes the double-submit guard end-to-end: a second `accept` call is
-  rejected with `409` without ever touching the analyzer, a losing
-  concurrent write (`SessionConflictError`) on either `refine` or `accept`
-  surfaces as `409` too, and a failed generation reverts the session back
-  to `"requirements"` rather than leaving it stuck
+* The `/requirements-runs` start/list/refine/accept/refine-architecture
+  routes, via `app.dependency_overrides` — no real Azure credentials
+  needed. This includes the double-submit guard end-to-end: a second
+  `accept` or `refine-architecture` call is rejected with `409` without
+  ever touching the analyzer, a losing concurrent write
+  (`SessionConflictError`) on `refine` or `accept` surfaces as `409` too,
+  a failed `accept` reverts the session back to `"requirements"`, and a
+  failed `refine-architecture` reverts it back to `"architecture"` (not
+  `"requirements"` — the previous design is still valid) rather than
+  leaving it stuck
 * The FastAPI `lifespan`'s startup and graceful shutdown, exercised via
   `with TestClient(app) as client:` (the context-manager form is required
   for lifespan to run at all — a bare `TestClient(app)` skips it)
@@ -1414,7 +1756,13 @@ If a credential is accidentally committed, rotate it immediately.
       ETag/`if-match` optimistic concurrency)
 * [x] Graceful shutdown of Cosmos + Blob clients
 * [x] Device-code token acquisition script for manual testing
-* [ ] Frontend / UI
+* [x] Read-only artifact-history endpoints (`app/api/routes/artifacts.py`)
+      — version lists and content (JSON + SVG) for both requirements and
+      architecture
+* [x] Frontend / UI — chat-first workspace (Conversation + Requirements +
+      Architecture), version switching, side-by-side version compare, and
+      an interactive diagram viewer; see the Frontend section above for
+      what's still missing (mainly automated frontend tests)
 
 ---
 
@@ -1424,8 +1772,15 @@ If a credential is accidentally committed, rotate it immediately.
 
 Planned:
 
-* [ ] Architecture refinement
-* [ ] Architecture version comparison
+* [x] Architecture refinement — `POST .../refine-architecture` (web API) and
+      `refine_architecture` (MCP); see the endpoint and "MCP" sections above
+* [x] Architecture version comparison — both client-side, in the frontend
+      (`VersionBar`/`DiffList` fetch two persisted versions via
+      `app/api/routes/artifacts.py` and diff them in the browser), and now
+      backend-computed (`GET .../architecture/compare`,
+      `app/design/comparison.py`) for any client that wants the diff
+      without fetching both full artifacts itself — see "Next Steps" →
+      "Architecture Version Comparison" below
 * [ ] Requirement-to-component coverage analysis
 * [ ] Requirement-to-interface coverage analysis
 * [ ] Architecture impact analysis
@@ -1545,82 +1900,125 @@ The next development phase should focus on moving from **MVP-2 architecture gene
 
 ## 1. Architecture Refinement
 
-Allow users to refine an existing architecture without regenerating the entire design from scratch.
+**Done.** Users can refine an existing architecture without regenerating
+the entire design from scratch, via `POST .../refine-architecture` (web
+API) or `refine_architecture` (MCP) — see those sections above for the
+full contract. Implementation:
 
 ```text
-Existing Architecture
+Existing Architecture (+ Requirements)
         │
         ▼
-Refinement Request
+Refinement Request (free-text)
         │
         ▼
 System Design Analyzer
+  (SystemDesignAnalyzer.analyze,
+   previous_design + refinement_input)
         │
         ▼
 Architecture Validator
         │
         ▼
-New Architecture Version
+New Architecture Version (design_version + 1)
 ```
 
-Planned capabilities:
+Capabilities:
 
-* Modify individual components
+* Modify individual components — the refinement prompt instructs the model
+  to preserve still-valid components/interfaces/dependencies and prefer
+  adjusting over wholesale regeneration, so IDs stay stable across a
+  refinement wherever possible.
 * Add or remove components
 * Modify interfaces
 * Modify external dependencies
-* Preserve unaffected architecture decisions
-* Generate a new architecture version
-* Validate the complete resulting architecture
+* Preserve unaffected architecture decisions (best-effort, prompt-driven —
+  not structurally enforced; see "What's deliberately not covered yet"
+  below)
+* Generate a new architecture version — `ArchitectureSession.generate`
+  accepts a `version` to continue from, so each refinement bumps
+  `design_version` rather than restarting it at 1
+* Validate the complete resulting architecture — the same
+  `ArchitectureValidator` used on the initial `accept`, not a partial or
+  incremental check
+
+**What's deliberately not covered yet:** the "preserve unaffected
+decisions" behavior is entirely prompt-driven (the model is instructed not
+to silently remove or rename existing IDs) rather than structurally
+enforced — there's no diff/merge step confirming the previous
+architecture's untouched parts survived byte-for-byte. A refinement can
+still be rejected by `ArchitectureValidator` after generation (e.g. if the
+model breaks a reference), in which case the session reverts to the
+previous, still-valid `"architecture"` stage rather than corrupting it —
+but nothing here guarantees minimal-diff output beyond what the prompt
+asks for.
 
 ---
 
 ## 2. Architecture Version Comparison
 
-Add structured comparison between architecture versions.
+**Done**, on both sides now:
 
-Example:
-
-```text
-Design v1
-   │
-   │ compare
-   ▼
-Design v2
-```
-
-The comparison should identify:
-
-* Added components
-* Removed components
-* Changed responsibilities
-* Added interfaces
-* Removed interfaces
-* Changed interfaces
-* Added external dependencies
-* Removed external dependencies
-* Changed traceability
-* Changed assumptions
-* Resolved or newly introduced questions
-
-Example output:
+* **Frontend (client-side).** Pick two persisted versions (via
+  `app/api/routes/artifacts.py`) and `VersionBar`/`DiffList` render a
+  side-by-side added/removed/changed field diff for every list field on
+  both artifacts, computed in the browser (`frontend/src/lib/diff.ts`'s
+  `diffByKey`). Unchanged since this was first written; still what the
+  frontend itself uses.
+* **Backend (structured, any client).**
+  `GET /requirements-runs/{id}/architecture/compare?from={v}&to={v}`
+  (`app/api/routes/artifacts.py`'s `compare_architecture_versions`,
+  comparison logic in `app/design/comparison.py`) computes the same kind
+  of id-keyed added/removed/changed/unchanged diff server-side, over
+  `components`, `interfaces`, `external_dependencies`, `assumptions`, and
+  `open_questions`, plus a before/after `architecture_summary` with a
+  `architecture_summary_changed` flag — as a typed `ArchitectureComparison`
+  response any client (an MCP client, a script, a different UI) can
+  consume without re-implementing the comparison itself, no full-artifact
+  fetch-and-diff round trip required. 404s if either version isn't stored
+  for the session, the same way `GET .../architecture/{version}` does.
 
 ```text
-Architecture Changes: v1 → v2
-
-Components
-  + DocumentProcessor
-  - LegacyProcessor
-
-Interfaces
-  + DocumentProcessor → SearchService
-
-External Dependencies
-  + Object Storage
-
-Traceability
-  REQ-004: SearchService added
+Design v1 ──┐
+            │  GET .../architecture/compare?from=1&to=2
+Design v2 ──┘         │
+                       ▼
+         ArchitectureComparison
+           (added/removed/changed/unchanged
+            per field, id-keyed)
 ```
+
+Example response shape:
+
+```json
+{
+  "from_version": 1,
+  "to_version": 2,
+  "architecture_summary_changed": true,
+  "from_architecture_summary": "...",
+  "to_architecture_summary": "...",
+  "components": {
+    "added": [{"id": "C-003", "name": "DocumentProcessor", "...": "..."}],
+    "removed": [{"id": "C-002", "name": "LegacyProcessor", "...": "..."}],
+    "changed": [{"before": {"...": "..."}, "after": {"...": "..."}}],
+    "unchanged": ["..."]
+  },
+  "interfaces": {"added": [], "removed": [], "changed": [], "unchanged": ["..."]},
+  "external_dependencies": {"added": ["..."], "removed": [], "changed": [], "unchanged": []},
+  "assumptions": {"added": [], "removed": [], "changed": [], "unchanged": ["..."]},
+  "open_questions": {"added": [], "removed": [], "changed": [], "unchanged": ["..."]}
+}
+```
+
+**What this doesn't do:** equality is purely structural (byte-for-byte
+field comparison, mirroring the frontend's own `diffByKey`/JSON-stringify
+approach) — it has no notion of a "renamed" component, which shows up as a
+remove-plus-add pair rather than a rename, and there's no separate
+requirement-traceability-specific view (that's `requirement_ids` fields
+inside each added/removed/changed component/interface, not surfaced as
+its own top-level diff section). Not wired into the frontend or MCP yet
+either — the frontend still uses its own client-side diff, and there's no
+`compare_architectures` MCP tool (see the "MCP Tool Expansion" section).
 
 ---
 
@@ -1776,17 +2174,38 @@ Expand the MCP adapter beyond the initial integration boundary.
 Potential MCP tools:
 
 ```text
-analyze_requirements
-refine_requirements
-generate_architecture
-validate_architecture
+analyze_requirements        ✓ done — see the "MCP" section above
+refine_requirements          ✓ done — see the "MCP" section above
+generate_architecture        ✓ done, as generate_system_design
+validate_architecture        ✓ done, as validate_system_design
+refine_architecture          ✓ done — see the "MCP" section above
 get_architecture
 compare_architectures
 get_traceability
 analyze_impact
-refine_architecture
 approve_architecture
 ```
+
+`analyze_requirements`/`refine_requirements` closed the biggest gap in the
+original list: previously the MCP layer could only generate/validate/
+diagram an architecture from a `RequirementsArtifact` a caller already
+had — there was no MCP tool to actually *produce* one from natural
+language, so an MCP client needed something outside MCP entirely just to
+get started. The requirements-to-architecture flow is now usable through
+MCP alone, end to end. `refine_architecture` closed the next gap: an
+accepted architecture no longer has to be regenerated from scratch (or
+edited outside the tool entirely) to apply a change — see the web API's
+`POST .../refine-architecture` and `SystemDesignAnalyzer.analyze`'s
+`previous_design`/`refinement_input` parameters.
+
+`get_architecture`, `compare_architectures`, and `get_traceability` remain
+open — these would read from what's already persisted (mirroring
+`app/api/routes/artifacts.py`) rather than only operating on JSON the
+caller already has, which is what the stateless tools above still require.
+`analyze_impact` and `approve_architecture` depend on capabilities that
+don't exist yet anywhere in the application (impact analysis and an
+approval workflow — see the Roadmap section below), not just on MCP
+wiring.
 
 The goal is to make the requirements-to-design workflow usable by MCP-compatible AI clients while keeping the underlying application services independent of MCP.
 
@@ -2006,7 +2425,7 @@ MVP-2
        ▼
 MVP-3
   │
-  ├── Architecture refinement
+  ├── ✓ Architecture refinement
   ├── Version comparison
   ├── Coverage analysis
   ├── Impact analysis

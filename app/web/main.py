@@ -25,6 +25,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes.artifacts import router as artifacts_router
 from app.api.routes.requirements import router as requirements_router
 from app.config import get_settings
 from app.infrastructure.session_store import CosmosSessionStore
@@ -110,6 +111,7 @@ def create_app() -> FastAPI:
         }
 
     app.include_router(requirements_router, dependencies=[Depends(require_user)])
+    app.include_router(artifacts_router, dependencies=[Depends(require_user)])
 
     return app
 

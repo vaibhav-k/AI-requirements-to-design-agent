@@ -47,10 +47,19 @@ class SystemDesignAnalyzer:
     def analyze(
         self,
         requirements: RequirementsArtifact,
+        previous_design: SystemDesignArtifact | None = None,
+        refinement_input: str | None = None,
     ) -> SystemDesignArtifact:
-        """Generate a high-level system design."""
+        """Generate a high-level system design.
 
-        prompt = self._build_prompt(requirements)
+        Passing ``previous_design`` (with an accompanying
+        ``refinement_input`` describing the requested change) refines that
+        design instead of generating a fresh one from scratch — the
+        architecture analogue of ``RequirementsAnalyzer.analyze``'s own
+        ``previous_artifact`` parameter.
+        """
+
+        prompt = self._build_prompt(requirements, previous_design, refinement_input)
 
         try:
             response = self.client.responses.parse(
@@ -86,8 +95,33 @@ class SystemDesignAnalyzer:
     @staticmethod
     def _build_prompt(
         requirements: RequirementsArtifact,
+        previous_design: SystemDesignArtifact | None = None,
+        refinement_input: str | None = None,
     ) -> str:
         requirements_json = requirements.model_dump_json(indent=2)
+
+        refinement_context = ""
+
+        if previous_design is not None:
+            refinement_context = f"""
+The user is refining a previously generated architecture rather than
+starting over.
+
+Previous architecture:
+
+{previous_design.model_dump_json(indent=2)}
+
+Requested change:
+
+{refinement_input or ""}
+
+Use the previous architecture as the starting point. Preserve components,
+interfaces, and external dependencies that are still valid. Apply the
+requested change. Do not silently remove or rename existing components,
+interfaces, or dependencies unless the requested change explicitly calls
+for it — prefer adding or adjusting over wholesale regeneration, so
+existing IDs remain stable across a refinement wherever possible.
+"""
 
         return f"""
 Create a HIGH-LEVEL SYSTEM ARCHITECTURE from the requirements below.
@@ -96,6 +130,7 @@ This is MVP-2 of a requirements-to-design agent.
 
 The purpose is to transform understood requirements into a
 logical system architecture.
+{refinement_context}
 
 DO:
 
@@ -103,12 +138,14 @@ DO:
 - Give every component a unique ID.
 - Describe each component's responsibility.
 - Map each component to the requirement IDs that justify it.
-- Identify important interactions between components.
+- Identify important interactions BETWEEN COMPONENTS ONLY.
 - Give every interface a unique ID.
 - Map each interface to the requirement IDs that justify it.
 - Identify external services, hardware, or dependencies explicitly
   required by the requirements.
-- For each external dependency, identify the components that use it.
+- For each external dependency, identify the components that use it,
+  by listing their component IDs in that dependency's own
+  "used_by_components" field.
 - Keep the architecture technology-neutral where possible.
 - Clearly distinguish requirements from assumptions.
 - Identify unresolved architecture questions.
@@ -126,6 +163,13 @@ DO NOT:
 - Choose frameworks without a requirement-driven reason.
 - Invent detailed infrastructure.
 - Over-engineer the solution.
+- Create an interface whose source or target is an external dependency.
+  A component's use of an external dependency (e.g. "Payment Service calls
+  the Stripe API") is captured ONLY by listing the component's ID under
+  that dependency's "used_by_components" — never as an interface. Every
+  interface's source_component and target_component must each be the ID
+  of an item in "components"; an external dependency's ID is never valid
+  there, in either direction.
 
 Every requirement-to-component and requirement-to-interface mapping
 must reference an actual requirement ID from the supplied requirements.

@@ -9,6 +9,9 @@ Mirrors the CLI's ``DesignSession``/``ArchitectureSession`` loop
 * ``GET  /requirements-runs/{id}``     — poll/resume a session.
 * ``POST /requirements-runs/{id}/refine``         — like choosing "2. Refine".
 * ``POST /requirements-runs/{id}/accept``         — like choosing "1. Accept".
+* ``POST /requirements-runs/{id}/refine-architecture`` — refine an
+  already-accepted architecture with new input; no CLI equivalent exists
+  yet (the CLI's loop only refines requirements, not architecture).
 
 Every route requires ``load_owned`` before touching a record, so one caller
 can never read or mutate another caller's session (see ``app/api/ownership.py``).
@@ -62,6 +65,10 @@ class StartRunRequest(BaseModel):
 
 
 class RefineRunRequest(BaseModel):
+    input: str
+
+
+class RefineArchitectureRequest(BaseModel):
     input: str
 
 
@@ -295,6 +302,88 @@ def accept_run(
         # caller can retry accept — a failed generation must not permanently
         # lock the session.
         record.stage = STAGE_REQUIREMENTS
+        record.error = str(exc)
+        _upsert_guarded(store, record)
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+
+    record.stage = STAGE_ARCHITECTURE
+    record.design_version = result.version
+    record.design = result.design
+    record.design_blob = result.design_blob
+    record.diagram_blob = result.diagram_blob
+    record.error = None
+
+    _upsert_guarded(store, record)
+    return RequirementsRunView.from_record(record)
+
+
+@router.post(
+    "/{session_id}/refine-architecture",
+    response_model=RequirementsRunView,
+)
+def refine_architecture(
+    session_id: str,
+    body: RefineArchitectureRequest,
+    request: Request,
+    store: SessionStore = Depends(get_session_store),  # noqa: B008
+    artifact_store: ArtifactStore = Depends(get_artifact_store),  # noqa: B008
+    analyzer: SystemDesignAnalyzer = Depends(get_design_analyzer),  # noqa: B008
+    diagram_generator: ArchitectureDiagramGenerator = Depends(  # noqa: B008
+        get_diagram_generator
+    ),
+    validator: ArchitectureValidator = Depends(get_validator),  # noqa: B008
+) -> RequirementsRunView:
+    """Refine an already-accepted architecture with new input.
+
+    The architecture analogue of ``refine_run``: unlike ``accept_run``
+    (which only fires once, from ``STAGE_REQUIREMENTS``), this can be called
+    repeatedly once a session has reached ``STAGE_ARCHITECTURE``, each call
+    producing a new design version built on top of the previous one rather
+    than starting from scratch — see ``SystemDesignAnalyzer.analyze``'s
+    ``previous_design``/``refinement_input`` parameters.
+    """
+    record = load_owned(store, session_id, request)
+
+    _require_stage(
+        record,
+        STAGE_ARCHITECTURE,
+        f"This session is in stage {record.stage!r}; refining an "
+        f"architecture is only possible once it's in {STAGE_ARCHITECTURE!r}.",
+    )
+    if record.requirements is None or record.design is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This session has no architecture to refine yet.",
+        )
+
+    # Same double-submit guard as accept_run: mark "generating" before the
+    # expensive work starts, conditional on the ETag this record was loaded
+    # with, so a second concurrent refine call gets a 409 instead of racing
+    # this one through generation against the same session.
+    record.stage = STAGE_GENERATING
+    _upsert_guarded(store, record)
+
+    design_session = ArchitectureSession(
+        analyzer=analyzer,
+        diagram_generator=diagram_generator,
+        validator=validator,
+        store=artifact_store,
+        session_id=record.session_id,
+        version=record.design_version,
+    )
+
+    try:
+        result = design_session.generate(
+            record.requirements,
+            previous_design=record.design,
+            refinement_input=body.input,
+        )
+    except DesignGenerationWorkflowError as exc:
+        # Revert to "architecture" (the previous design is still valid and
+        # still what's persisted) rather than leave the session stuck on
+        # "generating" — a failed refinement must not block retrying it, or
+        # block viewing the architecture that already existed.
+        record.stage = STAGE_ARCHITECTURE
         record.error = str(exc)
         _upsert_guarded(store, record)
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc

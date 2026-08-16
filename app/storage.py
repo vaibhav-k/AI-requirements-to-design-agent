@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from azure.core.exceptions import ResourceExistsError
+from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 from azure.storage.blob import (
     BlobServiceClient,
     ContentSettings,
@@ -91,20 +91,22 @@ class ArtifactStore:
             overwrite=True,
         )
 
-    def get_latest_design_version(self, session_id: str) -> int:
-        """Return the latest persisted design JSON version for a session."""
+    def _list_versions(self, prefix: str, suffix: str) -> list[int]:
+        """Every version number persisted under ``prefix`` ending in ``suffix``.
 
-        prefix = f"{self.environment}/{session_id}/design/"
-
+        Blob names are the source of truth for what versions exist — nothing
+        else (no separate index/manifest) tracks it — since each version is
+        its own immutable blob (``v{n}{suffix}``, never overwritten once
+        written; see ``save_design_json``/``save_design_svg``'s
+        ``overwrite=False``). Sorted ascending so callers get a stable,
+        oldest-first version history without re-sorting themselves.
+        """
         versions: list[int] = []
 
         for blob in self.container.list_blobs(name_starts_with=prefix):
             name = blob.name
 
-            if not name.startswith(prefix):
-                continue
-
-            if not name.endswith(".json"):
+            if not name.startswith(prefix) or not name.endswith(suffix):
                 continue
 
             filename = name.rsplit("/", 1)[-1]
@@ -112,14 +114,65 @@ class ArtifactStore:
             if not filename.startswith("v"):
                 continue
 
-            version_text = filename[1:-5]  # Remove "v" and ".json"
+            version_text = filename[1 : -len(suffix)]  # strip "v" prefix and suffix
 
             try:
                 versions.append(int(version_text))
             except ValueError:
                 continue
 
+        return sorted(versions)
+
+    def _download(self, blob_name: str) -> str | None:
+        """The text content of ``blob_name``, or ``None`` if it doesn't exist."""
+        try:
+            downloader = self.container.get_blob_client(blob_name).download_blob()
+        except ResourceNotFoundError:
+            return None
+        return downloader.readall().decode("utf-8")
+
+    def get_latest_design_version(self, session_id: str) -> int:
+        """Return the latest persisted design JSON version for a session."""
+
+        versions = self.list_design_versions(session_id)
         return max(versions, default=0)
+
+    def list_requirements_versions(self, session_id: str) -> list[int]:
+        """Every requirements version persisted for this session, oldest first."""
+
+        prefix = f"{self.environment}/{session_id}/requirements/"
+        return self._list_versions(prefix, ".json")
+
+    def get_requirements_json(self, session_id: str, version: int) -> str | None:
+        """The raw ``StoredArtifact`` JSON for one requirements version.
+
+        ``None`` if that version was never persisted (or was for a
+        different session) — the caller decides what that means (404,
+        typically).
+        """
+        blob_name = f"{self.environment}/{session_id}/requirements/v{version}.json"
+        return self._download(blob_name)
+
+    def list_design_versions(self, session_id: str) -> list[int]:
+        """Every design version persisted for this session, oldest first."""
+
+        prefix = f"{self.environment}/{session_id}/design/"
+        return self._list_versions(prefix, ".json")
+
+    def get_design_json(self, session_id: str, version: int) -> str | None:
+        """The raw ``SystemDesignArtifact`` JSON for one design version.
+
+        Unlike requirements' ``StoredArtifact`` envelope, this blob *is*
+        the design JSON directly — see ``ArchitectureSession.generate``.
+        """
+        blob_name = f"{self.environment}/{session_id}/design/v{version}.json"
+        return self._download(blob_name)
+
+    def get_design_svg(self, session_id: str, version: int) -> str | None:
+        """The raw architecture diagram SVG markup for one design version."""
+
+        blob_name = f"{self.environment}/{session_id}/design/v{version}.svg"
+        return self._download(blob_name)
 
     def save_design_json(
         self,

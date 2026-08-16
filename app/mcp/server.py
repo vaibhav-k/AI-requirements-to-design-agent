@@ -4,6 +4,7 @@ import json
 
 from mcp.server import MCPServer
 
+from app.analyzer import RequirementsAnalyzer
 from app.design.analyzer import SystemDesignAnalyzer
 from app.design.diagram import ArchitectureDiagramGenerator
 from app.design.models import SystemDesignArtifact
@@ -18,9 +19,55 @@ mcp = MCPServer(
     ),
 )
 
+_requirements_analyzer = RequirementsAnalyzer()
 _design_analyzer = SystemDesignAnalyzer()
 _diagram_generator = ArchitectureDiagramGenerator()
 _validator = ArchitectureValidator()
+
+
+@mcp.tool()
+def analyze_requirements(
+    user_input: str,
+) -> str:
+    """Analyze free-text input into a structured requirements artifact.
+
+    This is the entry point of the requirements-to-architecture flow — the
+    first tool an MCP client calls, before generate_system_design.
+
+    Args:
+        user_input: Free-text description of what the user wants to build.
+    """
+
+    requirements = _requirements_analyzer.analyze(user_input)
+
+    return requirements.model_dump_json(indent=2)
+
+
+@mcp.tool()
+def refine_requirements(
+    user_input: str,
+    requirements_json: str,
+) -> str:
+    """Refine an existing requirements artifact with new user input.
+
+    Uses the previous artifact as context, the same as the CLI's/web API's
+    "Refine" step: still-valid information is preserved, and the new input
+    is layered on top rather than starting the analysis from scratch.
+
+    Args:
+        user_input: New information to apply to the previous analysis.
+        requirements_json: JSON RequirementsArtifact from a prior
+            analyze_requirements/refine_requirements call.
+    """
+
+    previous = RequirementsArtifact.model_validate_json(requirements_json)
+
+    requirements = _requirements_analyzer.analyze(
+        user_input,
+        previous_artifact=previous,
+    )
+
+    return requirements.model_dump_json(indent=2)
 
 
 @mcp.tool()
@@ -36,6 +83,39 @@ def generate_system_design(
     requirements = RequirementsArtifact.model_validate_json(requirements_json)
 
     design = _design_analyzer.analyze(requirements)
+
+    return design.model_dump_json(indent=2)
+
+
+@mcp.tool()
+def refine_architecture(
+    user_input: str,
+    requirements_json: str,
+    design_json: str,
+) -> str:
+    """Refine an existing system design artifact with new user input.
+
+    Uses the previous design as context, the same as the web API's
+    "refine-architecture" step: still-valid components, interfaces, and
+    external dependencies are preserved, and the requested change is
+    applied on top rather than regenerating the architecture from scratch.
+
+    Args:
+        user_input: The requested change to apply to the previous design.
+        requirements_json: JSON RequirementsArtifact the design must still
+            satisfy (unchanged from the original generate_system_design call).
+        design_json: JSON SystemDesignArtifact from a prior
+            generate_system_design/refine_architecture call.
+    """
+
+    requirements = RequirementsArtifact.model_validate_json(requirements_json)
+    previous_design = SystemDesignArtifact.model_validate_json(design_json)
+
+    design = _design_analyzer.analyze(
+        requirements,
+        previous_design=previous_design,
+        refinement_input=user_input,
+    )
 
     return design.model_dump_json(indent=2)
 
@@ -70,6 +150,18 @@ def generate_architecture_diagram(
     _validator.validate(design)
 
     return _diagram_generator.generate(design)
+
+
+@mcp.resource(
+    "requirements://schema",
+)
+def requirements_schema() -> str:
+    """Return the RequirementsArtifact JSON schema."""
+
+    return json.dumps(
+        RequirementsArtifact.model_json_schema(),
+        indent=2,
+    )
 
 
 @mcp.resource(

@@ -53,9 +53,10 @@ class SessionRecord(BaseModel):
     """One requirements-to-design run. Persisted as a Cosmos document (id=session_id).
 
     Mirrors the CLI's own versioning model: ``requirements_version`` bumps on
-    every analyze/refine (``DesignSession.version``); ``design_version`` is
-    set once, when architecture is accepted (``ArchitectureSession.version``),
-    since this project doesn't support re-generating architecture in place.
+    every analyze/refine (``DesignSession.version``). ``design_version`` bumps
+    the same way once an architecture exists: once on accept, and again on
+    every subsequent ``refine-architecture`` call (``ArchitectureSession.version``)
+    — the architecture analogue of requirements refinement.
     """
 
     model_config = ConfigDict(populate_by_name=True)

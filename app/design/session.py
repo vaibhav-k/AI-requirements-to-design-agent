@@ -69,24 +69,42 @@ class ArchitectureSession:
         validator: ArchitectureValidator,
         store: DesignStore,
         session_id: str,
+        version: int = 0,
     ) -> None:
         self.analyzer = analyzer
         self.diagram_generator = diagram_generator
         self.validator = validator
         self.store = store
         self.session_id = session_id
-        self.version = 0
+        # Starts at 0 for a brand-new architecture (the first `generate()`
+        # call produces v1). Callers refining an already-accepted
+        # architecture pass in the session's current `design_version` here,
+        # so a refinement continues the same version sequence instead of
+        # restarting it at v1 — see `refine_architecture` in
+        # app/api/routes/requirements.py.
+        self.version = version
 
     def generate(
         self,
         requirements: RequirementsArtifact,
+        previous_design: SystemDesignArtifact | None = None,
+        refinement_input: str | None = None,
     ) -> DesignSessionResult:
-        """Generate, validate, render, and persist an architecture."""
+        """Generate, validate, render, and persist an architecture.
+
+        Passing ``previous_design``/``refinement_input`` refines that design
+        in place instead of generating a fresh one — see
+        ``SystemDesignAnalyzer.analyze``.
+        """
 
         next_version = self.version + 1
 
         try:
-            design: SystemDesignArtifact = self.analyzer.analyze(requirements)
+            design: SystemDesignArtifact = self.analyzer.analyze(
+                requirements,
+                previous_design=previous_design,
+                refinement_input=refinement_input,
+            )
 
             validated_design: SystemDesignArtifact = self.validator.validate(design)
 

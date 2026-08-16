@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  # app/analyzer.py and app/design/analyzer.py construct an OpenAI client at
+  # *import* time (RequirementsAnalyzer/SystemDesignAnalyzer's module-level
+  # `require_environment_variable` calls raise if these are unset), and
+  # every real API call in the test suite is mocked — so these only need to
+  # be present, never real credentials, for the whole suite to import and
+  # pass.
+  AZURE_OPENAI_API_KEY: test-key-not-real
+  AZURE_OPENAI_ENDPOINT: https://your-resource.openai.azure.com
+  AZURE_OPENAI_MODEL: test-model
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Graphviz
+        # The `dot` executable — required by tests/test_design_diagram.py,
+        # which renders a real diagram rather than mocking graphviz.
+        run: sudo apt-get update && sudo apt-get install -y graphviz
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Ruff
+        run: ruff check .
+
+      - name: mypy
+        run: mypy .
+
+      - name: pytest
+        run: pytest -v

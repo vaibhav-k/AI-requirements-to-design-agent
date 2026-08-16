@@ -18,7 +18,11 @@ addopts = "-ra"
 asyncio_mode = "auto"
 
 [tool.mypy]
-python_version = "3.14"
+# Matches `requires-python` above and ruff's `target-version` below — the
+# lowest Python version this project actually supports, not whatever
+# happens to be installed wherever mypy is run. CI runs on 3.12, which is a
+# compatible superset of 3.11 for type-checking purposes.
+python_version = "3.11"
 strict = true
 exclude = "^\\.venv/"
 warn_unused_ignores = true

@@ -309,6 +309,136 @@ def test_refine_run_returns_409_when_a_concurrent_write_wins_the_race(
     assert response.status_code == 409
 
 
+def test_refine_architecture_rejects_when_stage_is_not_architecture(
+    client: TestClient, fakes: dict[str, MagicMock]
+) -> None:
+    record = SessionRecord(session_id="abc-123", stage="requirements")
+    fakes["store"].get.return_value = record
+
+    response = client.post(
+        "/requirements-runs/abc-123/refine-architecture", json={"input": "Add caching."}
+    )
+
+    assert response.status_code == 409
+    fakes["design_analyzer"].analyze.assert_not_called()
+
+
+def test_refine_architecture_rejects_a_second_call_while_already_generating(
+    client: TestClient, fakes: dict[str, MagicMock]
+) -> None:
+    record = SessionRecord(
+        session_id="abc-123",
+        stage="generating",
+        requirements=make_requirements(),
+        design=make_design(),
+    )
+    fakes["store"].get.return_value = record
+
+    response = client.post(
+        "/requirements-runs/abc-123/refine-architecture", json={"input": "Add caching."}
+    )
+
+    assert response.status_code == 409
+    fakes["design_analyzer"].analyze.assert_not_called()
+    fakes["store"].upsert.assert_not_called()
+
+
+def test_refine_architecture_bumps_the_version_and_persists(
+    client: TestClient, fakes: dict[str, MagicMock]
+) -> None:
+    record = SessionRecord(
+        session_id="abc-123",
+        stage="architecture",
+        requirements_version=1,
+        requirements=make_requirements(),
+        design_version=1,
+        design=make_design(),
+    )
+    fakes["store"].get.return_value = record
+    fakes["design_analyzer"].analyze.return_value = make_design(
+        architecture_summary="A refined design."
+    )
+    fakes["validator"].validate.side_effect = lambda design: design
+    fakes["diagram_generator"].generate.return_value = "<svg></svg>"
+    fakes["artifact_store"].save_design_json.return_value = "dev/abc-123/design/v2.json"
+    fakes["artifact_store"].save_design_svg.return_value = "dev/abc-123/design/v2.svg"
+
+    stage_snapshots: list[str] = []
+
+    def _snapshot_stage(r: SessionRecord) -> SessionRecord:
+        stage_snapshots.append(r.stage)
+        return r
+
+    fakes["store"].upsert.side_effect = _snapshot_stage
+
+    response = client.post(
+        "/requirements-runs/abc-123/refine-architecture", json={"input": "Add caching."}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["stage"] == "architecture"
+    assert body["design_version"] == 2
+    assert body["design"]["architecture_summary"] == "A refined design."
+    # Once to mark "generating" before the expensive work starts, once more
+    # to persist the refined result.
+    assert stage_snapshots == ["generating", "architecture"]
+
+    # The analyzer must have been called with the previous design as context
+    # (the original, pre-refinement design), not asked to generate a fresh
+    # architecture from scratch.
+    _, call_kwargs = fakes["design_analyzer"].analyze.call_args
+    assert call_kwargs["previous_design"] == make_design()
+    assert call_kwargs["refinement_input"] == "Add caching."
+
+
+def test_refine_architecture_rejects_when_no_architecture_yet(
+    client: TestClient, fakes: dict[str, MagicMock]
+) -> None:
+    record = SessionRecord(
+        session_id="abc-123", stage="architecture", requirements=make_requirements()
+    )
+    fakes["store"].get.return_value = record
+
+    response = client.post(
+        "/requirements-runs/abc-123/refine-architecture", json={"input": "Add caching."}
+    )
+
+    assert response.status_code == 409
+
+
+def test_refine_architecture_returns_422_and_reverts_stage_when_generation_fails(
+    client: TestClient, fakes: dict[str, MagicMock]
+) -> None:
+    record = SessionRecord(
+        session_id="abc-123",
+        stage="architecture",
+        requirements=make_requirements(),
+        design_version=1,
+        design=make_design(),
+    )
+    fakes["store"].get.return_value = record
+    fakes["design_analyzer"].analyze.side_effect = DesignGenerationWorkflowError("boom")
+
+    stage_snapshots: list[str] = []
+
+    def _snapshot_stage(r: SessionRecord) -> SessionRecord:
+        stage_snapshots.append(r.stage)
+        return r
+
+    fakes["store"].upsert.side_effect = _snapshot_stage
+
+    response = client.post(
+        "/requirements-runs/abc-123/refine-architecture", json={"input": "Add caching."}
+    )
+
+    assert response.status_code == 422
+    # Once to mark "generating", once to revert to "architecture" (not
+    # "requirements" — the previous design is still valid) + set error.
+    assert stage_snapshots == ["generating", "architecture"]
+    assert record.error is not None
+
+
 def test_list_runs_returns_empty_when_caller_is_anonymous(
     client: TestClient, fakes: dict[str, MagicMock]
 ) -> None:
