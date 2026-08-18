@@ -66,3 +66,19 @@ class SystemDesignArtifact(BaseModel):
     assumptions: list[DesignAssumption] = Field(default_factory=list)
 
     open_questions: list[DesignQuestion] = Field(default_factory=list)
+
+
+class ApprovalDecision(BaseModel):
+    """One approve/reject decision recorded against an architecture version.
+
+    Persisted on ``SessionRecord.approval_history`` (see
+    ``app/infrastructure/session_store.py``) — an append-only log, never
+    rewritten or removed, so a session's full approval history survives
+    every later refinement rather than only reflecting the latest decision.
+    """
+
+    decision: str = Field(min_length=1)  # "approved" | "rejected"
+    architecture_version: int
+    reason: str | None = None
+    decided_by: str | None = None
+    decided_at: str

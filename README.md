@@ -24,6 +24,17 @@ The application now implements the MVP-2 architecture pipeline with the followin
 * Architecture refinement — an accepted architecture can be iterated on
   with new free-text input instead of only being generated once; see the
   "MCP" and endpoint sections below
+* Architecture version comparison — client-side (frontend diff) and a
+  backend-computed structured diff (`GET .../architecture/compare`)
+* Human approval workflow — approve/reject decisions recorded against an
+  architecture version, with a full decision history; see "Next Steps" →
+  "Human Approval Workflow" below
+* File upload for requirements input — PDF, DOCX, PNG, JPG, JPEG, and TXT
+  files can be scanned for requirements text instead of (or alongside)
+  typing it, via Azure AI Document Intelligence's `prebuilt-read` model;
+  the original uploaded file is persisted in Blob Storage alongside the
+  extracted-text artifact; see "Next Steps" → "File Upload for
+  Requirements Scanning" below
 * Graphviz architecture diagrams
 * SVG diagram generation
 * External dependencies represented in architecture diagrams
@@ -59,11 +70,12 @@ The application now implements the MVP-2 architecture pipeline with the followin
 * A React + Vite + TypeScript frontend (`frontend/`) built as a chat-first
   artifact explorer: sign in (or run anonymously against
   `AUTH_ENABLED=false`), a Conversation panel driving
-  start/refine/accept/refine-architecture with explicit
-  Loading/Processing/Ready/Error states, and a Requirements/Architecture
-  artifact panel with version switching, side-by-side version compare, and
-  an interactive (zoom/pan/click-to-inspect) diagram viewer — see the
-  Frontend section below
+  start/refine/accept/refine-architecture/approve/reject with explicit
+  Loading/Processing/Ready/Error states plus an approval-status pill, and
+  a Requirements/Architecture artifact panel with version switching,
+  side-by-side version compare, and an interactive
+  (zoom/pan/click-to-inspect) diagram viewer — see the Frontend section
+  below
 
 The architecture stage intentionally focuses on **logical, high-level system components**.
 
@@ -139,6 +151,18 @@ architecture pipeline, secured with Entra ID (Azure AD).
     fails — the session reverts to `"architecture"` (not `"requirements"`;
     the previous design is still valid and still what's persisted) so
     refinement can be retried, and its `error` field is set.
+  * `POST /requirements-runs/{id}/approve` / `POST /requirements-runs/{id}/reject`
+    — record an approve/reject decision against the *current*
+    `design_version`, with an optional free-text `reason`. `409` unless the
+    session is in the `"architecture"` stage. Neither is one-shot: calling
+    either again appends another entry to `approval_history` rather than
+    erroring, and `reject` deliberately leaves `stage` and the persisted
+    design untouched (it's a human judgment call, not a generation
+    failure) so `refine-architecture` still works immediately afterward —
+    the intended loop is reject → refine → re-approve. `approval_status`
+    resets to `"pending"` every time `design_version` changes (on `accept`
+    and on every `refine-architecture`), so a decision never silently
+    carries over to a design it wasn't actually made against.
 
   **On double-submission:** `accept` and `refine-architecture` both upsert
   the session with `stage="generating"` *before* starting the expensive work
@@ -265,6 +289,20 @@ curl http://localhost:8000/requirements-runs/<session_id>
 # List the caller's own sessions (returns [] when AUTH_ENABLED=false, since
 # sessions created without auth are unowned — see "On double-submission" above)
 curl http://localhost:8000/requirements-runs
+
+# Start (or refine) a run from an uploaded document instead of typed text —
+# see "Next Steps" → "File Upload for Requirements Scanning" below.
+# "notes" is optional free text appended after the extracted document text.
+curl -X POST http://localhost:8000/requirements-runs/upload \
+  -F "file=@spec.pdf" \
+  -F "notes=Focus on the payments section."
+
+curl -X POST http://localhost:8000/requirements-runs/<session_id>/refine/upload \
+  -F "file=@updated-spec.docx"
+
+# Download the original uploaded file behind the current requirements
+# version (404 if that version came from typed text instead)
+curl http://localhost:8000/requirements-runs/<session_id>/source-file -o downloaded
 ```
 
 **Try it in Swagger UI** — FastAPI generates an interactive docs page at
@@ -448,18 +486,22 @@ quick manual API testing, but aren't a product surface.
   (`GET /requirements-runs`) plus "New session".
 * **Conversation** (`Workspace.tsx` + `Conversation.tsx`) — the AI
   interaction layer. Starting a session, refining requirements, accepting
-  them to generate an architecture, and refining that architecture are all
-  driven from here as a chat transcript; every entry reflects something the
-  backend actually did (a persisted requirements/design summary, or a real
-  error), never fabricated conversational filler. A status pill shows
-  **Loading** (fetching an existing session), **Processing** (a
-  refine/accept/refine-architecture request is in flight — each backend
-  call is a single synchronous request, so this spans the whole wait rather
-  than faking granular progress), **Ready**, or **Error**. Once a session
-  reaches the `"architecture"` stage, further chat input is routed to
-  `POST .../refine-architecture` instead of `refine` — `Workspace.tsx`'s
-  `handleSend` branches on `run.stage` the same way it already branched on
-  "no session yet" vs. "requirements stage". Both `.../accept` and
+  them to generate an architecture, refining that architecture, and
+  approving/rejecting it are all driven from here as a chat transcript;
+  every entry reflects something the backend actually did (a persisted
+  requirements/design summary, a recorded decision, or a real error),
+  never fabricated conversational filler. A status pill shows **Loading**
+  (fetching an existing session), **Processing** (a
+  refine/accept/refine-architecture/approve/reject request is in flight —
+  each backend call is a single synchronous request, so this spans the
+  whole wait rather than faking granular progress), **Ready**, or
+  **Error**. Once a session reaches the `"architecture"` stage: further
+  chat input is routed to `POST .../refine-architecture` instead of
+  `refine` — `Workspace.tsx`'s `handleSend` branches on `run.stage` the
+  same way it already branched on "no session yet" vs. "requirements
+  stage" — and an approval-status pill (**Pending approval**, **Approved**,
+  or **Rejected**) plus **Approve**/**Reject** buttons appear alongside
+  "Accept & generate architecture". Both `.../accept` and
   `.../refine-architecture` failures are read directly off the backend's
   error text to tell an architecture *validation* failure
   (`DesignGenerationWorkflowError`'s "Architecture validation failed: ...")
@@ -468,6 +510,16 @@ quick manual API testing, but aren't a product surface.
   has chat input rejected client-side with an explanatory message rather
   than silently hitting the backend's `409` — see the "Recover sessions
   stuck on `generating`" limitation above, which this doesn't solve.
+  While the session is still in (or hasn't yet reached) the requirements
+  stage, a **Scan a file** button sits alongside Send: it opens a file
+  picker restricted to the supported extensions
+  (`.txt`/`.pdf`/`.docx`/`.png`/`.jpg`/`.jpeg`), and whatever's currently
+  typed in the textarea is sent along as optional notes appended to the
+  extracted text (`POST .../upload` / `POST .../refine/upload` — see "Next
+  Steps" → "File Upload for Requirements Scanning" below). A dashed
+  **Source: `<filename>`** pill appears next to the status pill whenever
+  the current requirements version came from an uploaded file rather than
+  typed text.
 * **Artifacts** (`ArtifactPanel.tsx`) — tabs for Requirements and
   Architecture, each backed by `app/api/routes/artifacts.py`:
   * `RequirementsView.tsx` — summary, business goal, actors,
@@ -645,10 +697,11 @@ not a browser sign-in redirect.
    polling loop for this today either — see "What's deliberately not
    covered yet" in the Frontend section.
 
-The pre-existing MVP-3/"Future" roadmap further down (version comparison,
-ADRs, deployment architecture generation, etc. — architecture refinement
-itself is now implemented, see the "MCP" and endpoint sections above) is
-still the right next horizon for the *pipeline* itself — the list
+The pre-existing MVP-3/"Future" roadmap further down (coverage analysis,
+impact analysis, ADRs, deployment architecture generation, etc. —
+architecture refinement, version comparison, and the human approval
+workflow are now implemented, see the "MCP" and endpoint sections above)
+is still the right next horizon for the *pipeline* itself — the list
 above is specifically about hardening the *web API* built this round
 before building further on top of it.
 
@@ -1414,6 +1467,12 @@ AZURE_OPENAI_MODEL=<deployment-name>
 AZURE_STORAGE_CONNECTION_STRING=<connection-string>
 AZURE_STORAGE_CONTAINER=requirements
 AZURE_STORAGE_ENVIRONMENT=dev
+
+# Optional — only required for scanning PDF/DOCX/PNG/JPG/JPEG files for
+# requirements (typed-text input keeps working without these; see "Next
+# Steps" → "File Upload for Requirements Scanning")
+AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT=https://<resource>.cognitiveservices.azure.com/
+AZURE_DOCUMENT_INTELLIGENCE_KEY=<key>
 ```
 
 The exact variables used by the application should match `.env.example`.
@@ -1785,7 +1844,9 @@ Planned:
 * [ ] Requirement-to-interface coverage analysis
 * [ ] Architecture impact analysis
 * [ ] Architecture decision records
-* [ ] Human approval workflow
+* [x] Human approval workflow — `POST .../approve`/`POST .../reject`
+      (web API only, no MCP tool yet); see "Next Steps" → "Human Approval
+      Workflow" below for what shipped vs. what was deliberately left out
 * [ ] Architecture change history
 
 ## Future
@@ -2135,35 +2196,124 @@ QueryService
 
 ## 6. Human Approval Workflow
 
-Introduce explicit architecture approval states.
+**Done**, in a simpler shape than originally sketched below (kept for
+context on what was considered and why the simpler version was chosen).
 
-```text
-Generated
-    │
-    ▼
-Validated
-    │
-    ▼
-Under Review
-    │
-    ├── Reject ─────► Refinement
-    │
-    ▼
-Approved
-```
+Implemented:
 
-Possible states:
+* `SessionRecord.approval_status` — `"pending"` | `"approved"` |
+  `"rejected"`, only meaningful once `stage == "architecture"`. Reset to
+  `"pending"` every time `design_version` changes (on `accept` and on
+  every `refine-architecture`), so a stale decision from a *previous*
+  design version is never misread as covering the current one.
+* `SessionRecord.approval_history` — an `ApprovalDecision` (`decision`,
+  `architecture_version`, `reason`, `decided_by`, `decided_at`) appended
+  on every decision, oldest first. Append-only: a later refinement resets
+  `approval_status` but never rewrites or removes history, so the full
+  reject → refine → approve trail survives.
+* `POST /requirements-runs/{id}/approve` / `POST .../reject` — record a
+  decision against the *current* architecture version, both accepting an
+  optional free-text `reason`. Valid only once `stage == "architecture"`.
+  Both are re-callable — approve again after a reject (or to record a
+  second reviewer's sign-off), or reject after an approve — each call
+  appends a new history entry rather than erroring on a second decision.
+* Rejection is deliberately **not** a dead end: unlike a failed
+  `accept`/`refine-architecture` (which reverts `stage`), `reject` leaves
+  `stage` and the persisted design untouched — it's a human judgment call,
+  not a generation failure — so `refine-architecture` still works
+  immediately afterward. The intended loop is reject → refine → re-approve.
+* Frontend: an approval-status pill next to the conversation status pill,
+  and Approve/Reject buttons alongside "Accept & generate architecture"
+  once a session reaches the architecture stage (`Conversation.tsx`,
+  wired up in `Workspace.tsx`'s `handleApprove`/`handleReject`).
 
-```text
-draft
-validated
-review
-approved
-rejected
-superseded
-```
+What was considered and deliberately left out, to keep the first version
+small:
 
-Only approved architectures should optionally become the baseline for downstream engineering workflows.
+* **No `draft`/`validated`/`review`/`superseded` states** — `stage` (from
+  the existing requirements→architecture flow) already distinguishes
+  "not generated yet" from "generated"; layering a second, largely
+  redundant state machine on top wasn't worth the complexity for what's
+  fundamentally a yes/no decision per design version.
+* **No MCP tool.** MCP tools here are stateless (see the "MCP" section) —
+  approving/rejecting mutates a persisted `SessionRecord`, which the MCP
+  layer has no access to today (same gap as `get_architecture`/
+  `compare_architectures`, not something specific to approval).
+* **No enforcement anywhere else in the system** — an "approved" status
+  doesn't currently gate anything (there's no downstream consumer yet to
+  gate). It's a recorded decision, not (yet) a permission check.
+
+---
+
+## File Upload for Requirements Scanning
+
+**Done.**
+
+Lets requirements come from an uploaded document — PDF, DOCX, PNG, JPG,
+JPEG, or TXT — instead of only typed free text.
+
+Implemented:
+
+* `app/ingestion.py` — `RequirementsDocumentExtractor.extract(filename,
+  content: bytes) -> str`. `.txt` is decoded directly (UTF-8); every other
+  supported format (PDF/DOCX/PNG/JPG/JPEG) is routed through Azure AI
+  Document Intelligence's `prebuilt-read` model — one shared OCR +
+  layout-aware extraction path instead of a separate library per format
+  (`pypdf`, `python-docx`, `pytesseract`, ...). Whatever text comes out
+  feeds into `RequirementsAnalyzer.analyze()` exactly like typed input —
+  the rest of the requirements pipeline doesn't know or care whether its
+  input was typed or extracted from a document.
+* The Document Intelligence client is built **lazily**, on first actual
+  use — unlike `AZURE_OPENAI_*`, which `app/analyzer.py` requires eagerly
+  at import time. File upload is optional and additive: a deployment that
+  only ever uses typed text input must keep working without
+  `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT`/`AZURE_DOCUMENT_INTELLIGENCE_KEY`
+  configured at all.
+* `POST /requirements-runs/upload` / `POST .../{id}/refine/upload` — sibling
+  multipart routes to the existing JSON-body `POST /requirements-runs` /
+  `POST .../{id}/refine`. Separate routes rather than an optional field on
+  the existing ones, because FastAPI can't mix a JSON body with
+  `UploadFile`/`Form` multipart parsing on one route. Both accept an
+  optional `notes` form field, appended after the extracted document text
+  before analysis. `refine/upload` is only valid in `STAGE_REQUIREMENTS`,
+  same as the typed-text `refine` route.
+* The original uploaded file is persisted, not just its extracted text:
+  `ArtifactStore.save_source_file`/`get_source_file` (blob name
+  `v{version}_source{ext}`, listed by prefix since the extension varies
+  per upload) store it in Blob Storage alongside the existing
+  requirements/design artifacts. `GET /requirements-runs/{id}/source-file`
+  downloads it back; 404s if the current requirements version came from
+  typed text instead. `SessionRecord.source_filename` (reset to `None` on
+  a typed-text `refine`, so it never misdescribes a later version) tracks
+  which version, if any, came from a file.
+* Frontend: a **Scan a file** button next to Send, shown while the session
+  is still in (or hasn't reached) the requirements stage, opening a
+  file picker restricted to the supported extensions. Whatever's typed in
+  the textarea at the time is sent as `notes`. A dashed **Source:
+  `<filename>`** pill next to the status pill shows when the current
+  version came from a file.
+
+What was considered and deliberately left out:
+
+* **One shared extraction service instead of per-format libraries** — the
+  user's explicit direction ("use Azure AI Document Intelligence wherever
+  possible") was extended from images (what the original question asked
+  about) to PDF and DOCX too, since `prebuilt-read` handles all of them
+  uniformly and a single service is simpler to operate and reason about
+  than `pypdf` + `python-docx` + `pytesseract` each with their own failure
+  modes.
+* **No MCP tool.** Same reasoning as the human approval workflow above:
+  MCP tools here are stateless (no `session_id`-based blob access), so a
+  file-scanning MCP tool would need a different shape entirely (raw file
+  bytes/base64 in the request, mirroring `analyze_requirements`'s
+  stateless design) rather than reusing the web API's session-based
+  upload routes as-is. Left for a future MCP tool if a client actually
+  needs it.
+* **Legacy binary `.doc` is not supported** — only `.docx`. If your
+  Document Intelligence resource is pinned to an older API version that
+  doesn't yet accept `.docx` as an input format, DOCX extraction fails
+  with a clear `DocumentExtractionError`; convert to PDF first as a
+  workaround.
 
 ---
 
@@ -2202,10 +2352,13 @@ edited outside the tool entirely) to apply a change — see the web API's
 open — these would read from what's already persisted (mirroring
 `app/api/routes/artifacts.py`) rather than only operating on JSON the
 caller already has, which is what the stateless tools above still require.
-`analyze_impact` and `approve_architecture` depend on capabilities that
-don't exist yet anywhere in the application (impact analysis and an
-approval workflow — see the Roadmap section below), not just on MCP
-wiring.
+`approve_architecture` is the same kind of gap now, not a missing
+capability: the approval workflow itself exists (`POST .../approve`/
+`POST .../reject`, see "Next Steps" → "Human Approval Workflow"), it's
+just a `SessionRecord` mutation the stateless MCP layer has no path to
+today. `analyze_impact` is the one tool here that still depends on a
+capability that doesn't exist yet anywhere in the application (impact
+analysis — see the Roadmap section below), not just on MCP wiring.
 
 The goal is to make the requirements-to-design workflow usable by MCP-compatible AI clients while keeping the underlying application services independent of MCP.
 
@@ -2426,11 +2579,11 @@ MVP-2
 MVP-3
   │
   ├── ✓ Architecture refinement
-  ├── Version comparison
+  ├── ✓ Version comparison
   ├── Coverage analysis
   ├── Impact analysis
   ├── ADRs
-  └── Human approval
+  └── ✓ Human approval
        │
        ▼
 MVP-4

@@ -65,3 +65,11 @@ class StoredArtifact(BaseModel):
     created_at: str
     source_text: str
     requirements: RequirementsArtifact
+    source_filename: str | None = None
+    """Original uploaded filename, if this artifact came from a file upload.
+
+    ``None`` for typed-text input (see ``app/ingestion.py``). When set, the
+    original file bytes are persisted separately via
+    ``ArtifactStore.save_source_file`` — this field is just the pointer
+    back to "was there a file, and what was it called."
+    """

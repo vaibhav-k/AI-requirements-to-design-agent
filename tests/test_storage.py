@@ -87,3 +87,67 @@ def test_close_closes_the_underlying_blob_service_client(
     store.close()
 
     store.service.close.assert_called_once()  # type: ignore[attr-defined]
+
+
+@patch("app.storage.BlobServiceClient")
+def test_save_source_file_uploads_the_raw_bytes_with_the_original_extension(
+    mock_blob_service: MagicMock,
+) -> None:
+    service = mock_blob_service.from_connection_string.return_value
+    container = service.get_container_client.return_value
+    blob = container.get_blob_client.return_value
+
+    store = ArtifactStore("test-connection", "requirements", environment="dev")
+
+    blob_name = store.save_source_file("session-123", 1, "spec.pdf", b"pdf bytes")
+
+    assert blob_name == "dev/session-123/requirements/v1_source.pdf"
+    container.get_blob_client.assert_called_once_with(
+        "dev/session-123/requirements/v1_source.pdf"
+    )
+    blob.upload_blob.assert_called_once()
+    args, kwargs = blob.upload_blob.call_args
+    assert args[0] == b"pdf bytes"
+    assert kwargs["content_settings"].content_type == "application/pdf"
+
+
+@patch("app.storage.BlobServiceClient")
+def test_get_source_file_returns_none_when_nothing_was_uploaded(
+    mock_blob_service: MagicMock,
+) -> None:
+    service = mock_blob_service.from_connection_string.return_value
+    container = service.get_container_client.return_value
+    container.list_blobs.return_value = []
+
+    store = ArtifactStore("test-connection", "requirements", environment="dev")
+
+    assert store.get_source_file("session-123", 1) is None
+
+
+@patch("app.storage.BlobServiceClient")
+def test_get_source_file_downloads_the_matching_blob_by_prefix(
+    mock_blob_service: MagicMock,
+) -> None:
+    service = mock_blob_service.from_connection_string.return_value
+    container = service.get_container_client.return_value
+
+    matching_blob = MagicMock()
+    matching_blob.name = "dev/session-123/requirements/v1_source.pdf"
+    container.list_blobs.return_value = [matching_blob]
+
+    blob_client = container.get_blob_client.return_value
+    downloader = blob_client.download_blob.return_value
+    downloader.readall.return_value = b"pdf bytes"
+    downloader.properties.content_settings.content_type = "application/pdf"
+
+    store = ArtifactStore("test-connection", "requirements", environment="dev")
+
+    result = store.get_source_file("session-123", 1)
+
+    assert result == (b"pdf bytes", "application/pdf")
+    container.list_blobs.assert_called_once_with(
+        name_starts_with="dev/session-123/requirements/v1_source"
+    )
+    container.get_blob_client.assert_called_with(
+        "dev/session-123/requirements/v1_source.pdf"
+    )

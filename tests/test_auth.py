@@ -9,12 +9,19 @@ from fastapi.security import HTTPAuthorizationCredentials
 
 from app.config import Settings
 from app.security.auth import (
+    ROLE_ADMIN,
+    ROLE_ARCHITECT,
+    ROLE_USER,
     AuthError,
+    RoleError,
     current_claims,
+    current_roles,
     current_user_key,
     decode_token,
     principal_of,
+    require_role,
     require_user,
+    roles_of,
     user_key,
     valid_audiences,
     valid_issuers,
@@ -230,3 +237,80 @@ async def test_require_user_attaches_claims_to_request_state_on_success() -> Non
 
     assert claims == {"oid": "abc"}
     assert request.state.user == {"oid": "abc"}
+
+
+# --------------------------------------------------------------------------- #
+# roles_of / current_roles
+# --------------------------------------------------------------------------- #
+
+
+def test_roles_of_reads_the_roles_claim() -> None:
+    assert roles_of({"roles": ["Architect", "User"]}) == {"Architect", "User"}
+
+
+def test_roles_of_is_empty_when_claim_missing() -> None:
+    assert roles_of({}) == frozenset()
+
+
+def test_roles_of_is_empty_when_claim_is_not_a_list() -> None:
+    assert roles_of({"roles": "Architect"}) == frozenset()
+
+
+def test_current_roles_reads_through_current_claims() -> None:
+    request = make_request(user={"oid": "abc", "roles": ["Reviewer"]})
+    assert current_roles(request) == {"Reviewer"}
+
+
+# --------------------------------------------------------------------------- #
+# require_role
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_require_role_is_a_noop_when_auth_disabled() -> None:
+    settings = make_settings(auth_enabled=False)
+
+    with patch("app.security.auth.get_settings", return_value=settings):
+        roles = await require_role(ROLE_ARCHITECT)({})
+
+    assert ROLE_ARCHITECT in roles
+
+
+@pytest.mark.asyncio
+async def test_require_role_allows_a_caller_with_an_allowed_role() -> None:
+    settings = make_settings(auth_enabled=True)
+
+    with patch("app.security.auth.get_settings", return_value=settings):
+        roles = await require_role(ROLE_USER, ROLE_ARCHITECT)({"roles": [ROLE_USER]})
+
+    assert roles == {ROLE_USER}
+
+
+@pytest.mark.asyncio
+async def test_require_role_rejects_a_caller_without_an_allowed_role() -> None:
+    settings = make_settings(auth_enabled=True)
+
+    with patch("app.security.auth.get_settings", return_value=settings):
+        with pytest.raises(RoleError) as exc_info:
+            await require_role(ROLE_ARCHITECT)({"roles": [ROLE_USER]})
+
+    assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_require_role_rejects_a_caller_with_no_roles_at_all() -> None:
+    settings = make_settings(auth_enabled=True)
+
+    with patch("app.security.auth.get_settings", return_value=settings):
+        with pytest.raises(RoleError):
+            await require_role(ROLE_USER, ROLE_ARCHITECT)({})
+
+
+@pytest.mark.asyncio
+async def test_require_role_always_allows_admin_regardless_of_allowed_roles() -> None:
+    settings = make_settings(auth_enabled=True)
+
+    with patch("app.security.auth.get_settings", return_value=settings):
+        roles = await require_role(ROLE_ARCHITECT)({"roles": [ROLE_ADMIN]})
+
+    assert roles == {ROLE_ADMIN}

@@ -18,6 +18,15 @@ Two rules are deliberate:
 
 Ownership is skipped entirely when ``AUTH_ENABLED=false``, because there is
 no identity to attribute a session to.
+
+A caller holding the ``Admin`` App Role (see ``app/security/auth.py``'s
+RBAC section) bypasses ownership entirely — "Admins can manage users and
+access across the system" — so ``owns``/``load_owned`` return true for
+*any* session for an Admin, not just their own. Every non-Admin role
+(User/Architect/Reviewer) still only ever sees what it owns; RBAC gates
+*which actions* a role may perform (see ``require_role`` in
+``app/security/auth.py`` and its use in the route modules), not whose
+sessions it can see.
 """
 
 from __future__ import annotations
@@ -28,7 +37,13 @@ from fastapi import HTTPException, Request, status
 
 from app.config import get_settings
 from app.infrastructure.session_store import SessionRecord, SessionStore
-from app.security.auth import current_claims, current_user_key, principal_of
+from app.security.auth import (
+    ROLE_ADMIN,
+    current_claims,
+    current_roles,
+    current_user_key,
+    principal_of,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +61,21 @@ def owner_fields(request: Request) -> tuple[str | None, str | None]:
     return key, (principal_of(claims) if key else None)
 
 
+def is_admin(request: Request) -> bool:
+    """Whether the caller holds the ``Admin`` App Role.
+
+    Only meaningful while ownership is enforced — with ``AUTH_ENABLED=false``
+    there are no roles to check, and ownership is skipped entirely anyway
+    (see ``ownership_enforced``), so this returns ``False`` in that mode
+    rather than (redundantly, but confusingly) ``True``.
+    """
+    return ownership_enforced() and ROLE_ADMIN in current_roles(request)
+
+
 def owns(record: SessionRecord, request: Request) -> bool:
     if not ownership_enforced():
+        return True
+    if is_admin(request):
         return True
     caller = current_user_key(request)
     return bool(caller) and record.owner_oid == caller

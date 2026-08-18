@@ -8,11 +8,20 @@ a resource-server concern.
 Authentication is opt-in via ``Settings.auth_enabled``. With it left off (the
 default), ``require_user`` is a no-op that returns an empty claims dict, so
 local development and CI never need a real Entra ID tenant configured.
+
+This module also implements role-based access control (RBAC) on top of that
+authentication: ``require_role`` reads the Entra ID App Roles on the
+validated token (the standard ``roles`` claim — see ``roles_of``) and gates
+a route to callers holding one of a set of allowed roles. See the README's
+"RBAC" section for the app-role setup (App registration → App roles →
+Enterprise Applications assignment) and the permission matrix
+(User/Architect/Reviewer/Admin) this project uses.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from functools import lru_cache
 from typing import Any
 
@@ -147,8 +156,97 @@ async def require_user(
         return {}
 
     if credentials is None or not credentials.credentials:
-        raise AuthError("Missing bearer token.")
+        raise AuthError(
+            "Missing bearer token. You are not signed in — sign in and "
+            "retry with a valid Entra ID access token in the "
+            "Authorization header."
+        )
 
     claims = decode_token(credentials.credentials, settings)
     request.state.user = claims
     return claims
+
+
+# --------------------------------------------------------------------------- #
+# RBAC — Entra ID App Roles
+# --------------------------------------------------------------------------- #
+
+# Defined in the app registration's "App roles" manifest blade and assigned
+# to users/groups under Enterprise Applications → this app → Users and
+# groups; Entra ID then populates the token's `roles` claim with whichever
+# of these the signed-in caller was assigned. Not a hierarchy — a caller may
+# hold more than one — except `ROLE_ADMIN`, which `require_role` always lets
+# through regardless of which roles it was asked to check for (see below).
+ROLE_ADMIN = "Admin"
+ROLE_ARCHITECT = "Architect"
+ROLE_REVIEWER = "Reviewer"
+ROLE_USER = "User"
+
+ALL_APP_ROLES = (ROLE_ADMIN, ROLE_ARCHITECT, ROLE_REVIEWER, ROLE_USER)
+
+
+def roles_of(claims: dict[str, Any]) -> frozenset[str]:
+    """The Entra ID App Roles on a decoded token, or empty if none.
+
+    Reads the standard ``roles`` claim (a JSON array of strings that Entra
+    ID populates from Enterprise Applications role assignments) — not
+    ``scp`` (delegated *scopes*, the audience/permission concept
+    ``decode_token`` already validates) and not ``wids``/``groups`` (built-in
+    directory roles / security group membership) — App Roles are what this
+    project's RBAC is built on; see the README's "RBAC" section for why.
+    """
+    raw = claims.get("roles", [])
+    if not isinstance(raw, list):
+        return frozenset()
+    return frozenset(str(role) for role in raw)
+
+
+def current_roles(request: Request) -> frozenset[str]:
+    """The caller's App Roles, read through ``current_claims``."""
+    return roles_of(current_claims(request))
+
+
+class RoleError(HTTPException):
+    def __init__(self, detail: str) -> None:
+        super().__init__(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+
+
+def require_role(
+    *allowed: str,
+) -> Callable[[dict[str, Any]], Awaitable[frozenset[str]]]:
+    """FastAPI dependency factory: 403 unless the caller holds one of ``allowed``.
+
+    ``ROLE_ADMIN`` always passes, no matter what ``allowed`` was asked for —
+    "Admins can manage users and access across the system" (see the
+    README's "RBAC" section) means Admin is a superset of every other
+    role's permissions, not a fifth, separately-granted capability. A caller
+    with no recognized role at all — including one with a perfectly valid
+    token — always fails, even a bare ``require_role(*ALL_APP_ROLES)`` on a
+    read-only route: an authenticated user who was never assigned an app
+    role gets 403, not silent full access, matching this project's decision
+    to reject rather than default such a caller into the baseline role.
+
+    A no-op when ``Settings.auth_enabled`` is ``False``, exactly like
+    ``require_user`` — local development and CI never need roles
+    configured either, only a real Entra ID tenant with AUTH_ENABLED=true
+    does.
+    """
+
+    async def _dependency(
+        claims: dict[str, Any] = Depends(require_user),  # noqa: B008
+    ) -> frozenset[str]:
+        settings = get_settings()
+        if not settings.auth_enabled:
+            return frozenset(ALL_APP_ROLES)
+
+        roles = roles_of(claims)
+        if ROLE_ADMIN in roles or roles & set(allowed):
+            return roles
+
+        raise RoleError(
+            "This action requires one of these roles: "
+            f"{', '.join(sorted(allowed))}. "
+            f"Caller has: {', '.join(sorted(roles)) or 'none'}."
+        )
+
+    return _dependency

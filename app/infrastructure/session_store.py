@@ -29,7 +29,7 @@ from azure.identity import ManagedIdentityCredential
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import Settings, get_settings
-from app.design.models import SystemDesignArtifact
+from app.design.models import ApprovalDecision, SystemDesignArtifact
 from app.models import RequirementsArtifact
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,10 @@ class SessionRecord(BaseModel):
     every analyze/refine (``DesignSession.version``). ``design_version`` bumps
     the same way once an architecture exists: once on accept, and again on
     every subsequent ``refine-architecture`` call (``ArchitectureSession.version``)
-    — the architecture analogue of requirements refinement.
+    — the architecture analogue of requirements refinement. ``approval_status``/
+    ``approval_history`` track whether the *current* design version has been
+    signed off on — see ``app/api/routes/requirements.py``'s
+    ``approve_run``/``reject_run``.
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -68,6 +71,18 @@ class SessionRecord(BaseModel):
     stage: str = "requirements"  # "requirements" | "generating" | "architecture"
 
     source_text: str = ""
+    source_filename: str | None = None
+    """Original uploaded filename for the *current* requirements version,
+    if it came from a file upload rather than typed text (see
+    ``app/ingestion.py`` and the ``/upload`` routes in
+    ``app/api/routes/requirements.py``). Reset to ``None`` whenever a
+    version is created from typed text instead.
+    """
+    source_file_blob: str | None = None
+    """Blob name of the persisted original file for ``source_filename``,
+    written via ``ArtifactStore.save_source_file``. ``None`` whenever
+    ``source_filename`` is ``None``.
+    """
     requirements_version: int = 0
     requirements: RequirementsArtifact | None = None
     requirements_blob: str | None = None
@@ -76,6 +91,20 @@ class SessionRecord(BaseModel):
     design: SystemDesignArtifact | None = None
     design_blob: str | None = None
     diagram_blob: str | None = None
+
+    # "pending" | "approved" | "rejected". Only meaningful once `stage` is
+    # `"architecture"` — reset to "pending" every time `design_version`
+    # changes (on `accept` and on every `refine-architecture`), since an
+    # approval decision made against one design version should never be
+    # read as covering a *different*, later version of that design. See
+    # `app/api/routes/requirements.py`'s `approve_run`/`reject_run`.
+    approval_status: str = "pending"
+    # Append-only — every decision ever made against this session, oldest
+    # first, even ones superseded by a later refinement + re-approval.
+    # `approval_status` alone answers "what's the current decision";
+    # `approval_history` answers "what decisions were ever made, by whom,
+    # against which version, and why."
+    approval_history: list[ApprovalDecision] = Field(default_factory=list)
 
     error: str | None = None
 
@@ -107,6 +136,8 @@ class SessionStore(Protocol):
     def upsert(self, record: SessionRecord) -> SessionRecord: ...
 
     def list_for_owner(self, owner_oid: str) -> list[SessionRecord]: ...
+
+    def list_all(self) -> list[SessionRecord]: ...
 
 
 class CosmosSessionStore:
@@ -216,6 +247,26 @@ class CosmosSessionStore:
             for item in self._require_container().query_items(
                 query=query,
                 parameters=[{"name": "@owner", "value": owner_oid}],
+                enable_cross_partition_query=True,
+            )
+        ]
+
+    def list_all(self) -> list[SessionRecord]:
+        """Every session across every owner, newest first.
+
+        Only meant for an ``Admin``-role caller (see
+        ``app/api/ownership.py``'s ``is_admin`` and ``list_runs`` in
+        ``app/api/routes/requirements.py``) — "Admins can manage users and
+        access across the system" needs a way to see sessions that aren't
+        theirs, which ``list_for_owner`` deliberately can't do. Same
+        cross-partition query shape as ``list_for_owner``, just without the
+        ``WHERE`` clause.
+        """
+        query = "SELECT * FROM c ORDER BY c._ts DESC"
+        return [
+            SessionRecord.model_validate(item)
+            for item in self._require_container().query_items(
+                query=query,
                 enable_cross_partition_query=True,
             )
         ]

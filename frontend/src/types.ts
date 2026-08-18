@@ -93,14 +93,42 @@ export interface SystemDesignArtifact {
 // exhaustive.
 export type SessionStage = string
 
+// "pending" | "approved" | "rejected" — matches SessionRecord.approval_status.
+// Same "kept as string" reasoning as SessionStage above.
+export type ApprovalStatus = string
+
+export interface ApprovalDecision {
+  decision: ApprovalStatus
+  architecture_version: number
+  reason: string | null
+  decided_by: string | null
+  decided_at: string
+}
+
+// Mirrors GET /me's response (app/web/main.py's `whoami`). `roles` is every
+// Entra ID App Role assigned to the caller (see app/security/auth.py's
+// `roles_of`) — with AUTH_ENABLED=false on the backend this is every role
+// (ALL_APP_ROLES), not empty, since every `require_role` check passes
+// regardless of role in that mode; see useCurrentUser.ts for how the UI
+// uses this to grey out actions.
+export interface MeResponse {
+  authenticated: boolean
+  principal: string
+  oid: string
+  roles: string[]
+}
+
 export interface RequirementsRunView {
   session_id: string
   stage: SessionStage
   requirements_version: number
   requirements: RequirementsArtifact | null
+  source_filename: string | null
   design_version: number
   design: SystemDesignArtifact | null
   design_blob: string | null
   diagram_blob: string | null
+  approval_status: ApprovalStatus
+  approval_history: ApprovalDecision[]
   error: string | null
 }

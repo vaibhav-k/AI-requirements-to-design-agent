@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import mimetypes
 import os
 
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
@@ -241,10 +242,81 @@ class ArtifactStore:
             delete_snapshots="include",
         )
 
+    def save_source_file(
+        self,
+        session_id: str,
+        version: int,
+        filename: str,
+        content: bytes,
+    ) -> str:
+        """Persist the original uploaded requirements source document.
+
+        Kept alongside (not instead of) the extracted-text ``StoredArtifact``
+        JSON saved by ``save`` — the extracted text feeds the requirements
+        pipeline, while this raw file is retained so the original upload
+        stays retrievable (e.g. to re-review or re-extract later). The
+        blob name preserves the original extension (``suffix``) since it
+        varies per upload; ``get_source_file`` therefore lists by prefix
+        rather than a fixed name.
+        """
+
+        suffix = os.path.splitext(filename)[1].lower()
+        blob_name = (
+            f"{self.environment}/{session_id}/requirements/v{version}_source{suffix}"
+        )
+
+        content_type, _ = mimetypes.guess_type(filename)
+
+        return self._upload(
+            blob_name=blob_name,
+            content=content,
+            content_type=content_type or "application/octet-stream",
+            overwrite=True,
+        )
+
+    def get_source_file(
+        self,
+        session_id: str,
+        version: int,
+    ) -> tuple[bytes, str] | None:
+        """The original uploaded file for a requirements version, if any.
+
+        Returns ``(content_bytes, content_type)``, or ``None`` if that
+        version wasn't created from an uploaded file (e.g. typed text
+        input never has a source file). The extension varies per upload,
+        so this lists blobs by the ``v{version}_source`` prefix rather
+        than guessing the suffix.
+        """
+
+        prefix = f"{self.environment}/{session_id}/requirements/v{version}_source"
+
+        match = None
+        for blob in self.container.list_blobs(name_starts_with=prefix):
+            match = blob.name
+            break
+
+        if match is None:
+            return None
+
+        blob_client = self.container.get_blob_client(match)
+
+        try:
+            downloader = blob_client.download_blob()
+        except ResourceNotFoundError:
+            return None
+
+        content_bytes = downloader.readall()
+        content_type = (
+            downloader.properties.content_settings.content_type
+            or "application/octet-stream"
+        )
+
+        return content_bytes, content_type
+
     def _upload(
         self,
         blob_name: str,
-        content: str,
+        content: str | bytes,
         content_type: str,
         overwrite: bool,
     ) -> str:
