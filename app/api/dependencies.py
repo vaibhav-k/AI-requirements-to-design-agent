@@ -23,6 +23,7 @@ from app.design.validator import ArchitectureValidator
 from app.infrastructure.session_store import SessionStore
 from app.ingestion import RequirementsDocumentExtractor
 from app.storage import ArtifactStore
+from app.vision import DiagramImageInterpreter, ImageInputClassifier
 
 
 def get_session_store(request: Request) -> SessionStore:
@@ -53,6 +54,14 @@ def get_validator() -> ArchitectureValidator:
 
 def get_document_extractor() -> RequirementsDocumentExtractor:
     return RequirementsDocumentExtractor()
+
+
+def get_image_classifier() -> ImageInputClassifier:
+    return ImageInputClassifier()
+
+
+def get_diagram_interpreter() -> DiagramImageInterpreter:
+    return DiagramImageInterpreter()
 
 
 @dataclass
@@ -121,4 +130,49 @@ def get_requirements_upload_dependencies(
         artifact_store=artifact_store,
         analyzer=analyzer,
         extractor=extractor,
+    )
+
+
+@dataclass
+class ImageUploadDependencies:
+    """Bundles the services image-input classification needs on top of
+    :class:`RequirementsUploadDependencies`.
+
+    An uploaded PNG/JPG/JPEG could turn out to be either a document
+    screenshot (handled by ``RequirementsUploadDependencies`` exactly as
+    before) or a system design/workflow diagram — see ``app/vision.py``.
+    The diagram branch needs everything ``ArchitectureGenerationDependencies``
+    already bundles (to validate, render, and persist the interpreted
+    design through ``ArchitectureSession.generate_from_design``) plus the
+    classifier and interpreter themselves, so this composes both rather
+    than repeating either.
+    """
+
+    artifact_store: ArtifactStore
+    classifier: ImageInputClassifier
+    diagram_interpreter: DiagramImageInterpreter
+    design_analyzer: SystemDesignAnalyzer
+    diagram_generator: ArchitectureDiagramGenerator
+    validator: ArchitectureValidator
+
+
+def get_image_upload_dependencies(
+    artifact_store: ArtifactStore = Depends(get_artifact_store),  # noqa: B008
+    classifier: ImageInputClassifier = Depends(get_image_classifier),  # noqa: B008
+    diagram_interpreter: DiagramImageInterpreter = Depends(  # noqa: B008
+        get_diagram_interpreter
+    ),
+    design_analyzer: SystemDesignAnalyzer = Depends(get_design_analyzer),  # noqa: B008
+    diagram_generator: ArchitectureDiagramGenerator = Depends(  # noqa: B008
+        get_diagram_generator
+    ),
+    validator: ArchitectureValidator = Depends(get_validator),  # noqa: B008
+) -> ImageUploadDependencies:
+    return ImageUploadDependencies(
+        artifact_store=artifact_store,
+        classifier=classifier,
+        diagram_interpreter=diagram_interpreter,
+        design_analyzer=design_analyzer,
+        diagram_generator=diagram_generator,
+        validator=validator,
     )

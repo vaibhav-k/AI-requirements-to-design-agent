@@ -68,6 +68,15 @@ class SessionRecord(BaseModel):
     owner_oid: str | None = None
     owner_name: str | None = None
 
+    name: str | None = None
+    """User-editable display label for this session (e.g. "Checkout revamp"),
+    distinct from ``session_id`` and from ``owner_name``. ``None`` until
+    someone renames it (``PATCH /requirements-runs/{id}/name``), in which
+    case the UI falls back to showing a shortened ``session_id``. Purely a
+    label — never read by any analyzer or generation step, and renaming
+    doesn't bump any version counter.
+    """
+
     stage: str = "requirements"  # "requirements" | "generating" | "architecture"
 
     source_text: str = ""

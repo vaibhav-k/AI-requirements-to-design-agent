@@ -39,6 +39,15 @@ export const msalConfig: Configuration = {
 
 export const loginRequest = {
   scopes: apiScope ? [apiScope] : [],
+  // Without this, `loginRedirect` completes silently against whatever
+  // account already has an active Entra ID SSO session in this browser (a
+  // cookie, or — on an Entra-joined Windows device — a Primary Refresh
+  // Token) instead of asking, so "Sign in" only ever signs you back in as
+  // yourself even when you meant to switch accounts. `select_account`
+  // makes Entra ID always show the account chooser (with a "Use another
+  // account" option that does prompt for credentials) rather than skipping
+  // straight to whichever account is already implicitly signed in.
+  prompt: "select_account",
 }
 
 export const apiBaseUrl =

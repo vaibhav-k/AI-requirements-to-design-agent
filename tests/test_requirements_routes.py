@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,7 +10,9 @@ from app.api.dependencies import (
     get_artifact_store,
     get_design_analyzer,
     get_diagram_generator,
+    get_diagram_interpreter,
     get_document_extractor,
+    get_image_classifier,
     get_requirements_analyzer,
     get_session_store,
     get_validator,
@@ -19,6 +22,11 @@ from app.design.models import SystemDesignArtifact
 from app.design.session import DesignGenerationWorkflowError
 from app.infrastructure.session_store import SessionConflictError, SessionRecord
 from app.models import RequirementsArtifact
+from app.vision import (
+    DiagramInterpretationError,
+    ImageClassification,
+    ImageClassificationError,
+)
 from app.web.main import create_app
 
 
@@ -55,11 +63,32 @@ def fakes() -> dict[str, MagicMock]:
         "diagram_generator": MagicMock(),
         "validator": MagicMock(),
         "document_extractor": MagicMock(),
+        "image_classifier": MagicMock(),
+        "diagram_interpreter": MagicMock(),
     }
 
 
 @pytest.fixture
-def client(fakes: dict[str, MagicMock]) -> TestClient:
+def client(fakes: dict[str, MagicMock]) -> Iterator[TestClient]:
+    """A ``TestClient`` with ``AUTH_ENABLED=false`` — every ``require_role``/
+    ``require_user``/ownership check is a no-op, so these tests exercise
+    route *logic* only (see ``test_rbac.py`` for the auth-turned-on
+    counterpart).
+
+    ``get_settings`` is patched at every layer that calls it directly —
+    ``app.web.main`` (app construction), ``app.security.auth``
+    (``require_user``/``require_role``), and ``app.api.ownership``
+    (``is_admin``/``owns``) each import their own bound name, so patching
+    only one (as this used to) leaves the other two reading the *real*,
+    unpatched ``Settings()`` — whatever a developer's actual environment/
+    ``.env`` resolves ``AUTH_ENABLED`` to. That only "worked" by coincidence
+    whenever the real environment happened to default to
+    ``AUTH_ENABLED=false`` too; the moment a local ``.env`` sets it to
+    ``true`` (e.g. to test real Entra ID sign-in against the frontend),
+    every route here starts 401ing before its own logic ever runs. All
+    three are patched for the fixture's whole lifetime — not just during
+    ``create_app()`` — the same shape as ``test_rbac.py``'s ``rbac_app``.
+    """
     settings = Settings(auth_enabled=False)
     with patch("app.web.main.get_settings", return_value=settings):
         app = create_app()
@@ -75,8 +104,20 @@ def client(fakes: dict[str, MagicMock]) -> TestClient:
     app.dependency_overrides[get_document_extractor] = lambda: fakes[
         "document_extractor"
     ]
+    app.dependency_overrides[get_image_classifier] = lambda: fakes["image_classifier"]
+    app.dependency_overrides[get_diagram_interpreter] = lambda: fakes[
+        "diagram_interpreter"
+    ]
 
-    return TestClient(app)
+    auth_patcher = patch("app.security.auth.get_settings", return_value=settings)
+    ownership_patcher = patch("app.api.ownership.get_settings", return_value=settings)
+    auth_patcher.start()
+    ownership_patcher.start()
+    try:
+        yield TestClient(app)
+    finally:
+        auth_patcher.stop()
+        ownership_patcher.stop()
 
 
 def test_start_run_creates_a_session_and_returns_requirements(
@@ -625,9 +666,9 @@ def test_start_run_from_upload_extracts_text_and_creates_a_session(
     fakes["document_extractor"].extract.return_value = "Extracted requirements text."
     fakes["requirements_analyzer"].analyze.return_value = make_requirements()
     fakes["artifact_store"].save.return_value = "dev/x/requirements/v1.json"
-    fakes["artifact_store"].save_source_file.return_value = (
-        "dev/x/requirements/v1_source.pdf"
-    )
+    fakes[
+        "artifact_store"
+    ].save_source_file.return_value = "dev/x/requirements/v1_source.pdf"
 
     response = client.post(
         "/requirements-runs/upload",
@@ -785,3 +826,221 @@ def test_get_source_file_returns_the_persisted_file(
     assert response.content == b"%PDF-1.4 fake bytes"
     assert response.headers["content-type"] == "application/pdf"
     assert "spec.pdf" in response.headers["content-disposition"]
+
+
+def test_rename_run_trims_and_persists_the_name(
+    client: TestClient, fakes: dict[str, MagicMock]
+) -> None:
+    record = SessionRecord(session_id="abc-123")
+    fakes["store"].get.return_value = record
+
+    response = client.post(
+        "/requirements-runs/abc-123/rename", json={"name": "  Checkout revamp  "}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Checkout revamp"
+    fakes["store"].upsert.assert_called_once()
+
+
+def test_rename_run_rejects_a_name_that_is_only_whitespace(
+    client: TestClient, fakes: dict[str, MagicMock]
+) -> None:
+    record = SessionRecord(session_id="abc-123")
+    fakes["store"].get.return_value = record
+
+    response = client.post("/requirements-runs/abc-123/rename", json={"name": "   "})
+
+    assert response.status_code == 422
+    fakes["store"].upsert.assert_not_called()
+
+
+def test_rename_run_rejects_a_name_over_the_length_limit(
+    client: TestClient, fakes: dict[str, MagicMock]
+) -> None:
+    record = SessionRecord(session_id="abc-123")
+    fakes["store"].get.return_value = record
+
+    response = client.post(
+        "/requirements-runs/abc-123/rename", json={"name": "x" * 201}
+    )
+
+    assert response.status_code == 422
+    fakes["store"].upsert.assert_not_called()
+
+
+def test_rename_run_returns_404_for_an_unknown_session(
+    client: TestClient, fakes: dict[str, MagicMock]
+) -> None:
+    fakes["store"].get.return_value = None
+
+    response = client.post(
+        "/requirements-runs/missing/rename", json={"name": "New name"}
+    )
+
+    assert response.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# Image input classification (app/vision.py) — start/refine from an image
+# --------------------------------------------------------------------------- #
+
+
+def test_start_run_from_upload_with_document_image_uses_ocr_pipeline(
+    client: TestClient, fakes: dict[str, MagicMock]
+) -> None:
+    """A PNG classified as a document screenshot goes through the exact
+    same OCR-extraction-then-analyze pipeline as before image
+    classification existed — the diagram interpreter/design pipeline is
+    never touched."""
+    fakes["image_classifier"].classify.return_value = ImageClassification(
+        kind="document", reasoning="It's a screenshot of typed notes."
+    )
+    fakes["document_extractor"].extract.return_value = "Extracted requirements text."
+    fakes["requirements_analyzer"].analyze.return_value = make_requirements()
+    fakes["artifact_store"].save.return_value = "dev/x/requirements/v1.json"
+    fakes[
+        "artifact_store"
+    ].save_source_file.return_value = "dev/x/requirements/v1_source.png"
+
+    response = client.post(
+        "/requirements-runs/upload",
+        files={"file": ("notes.png", b"fake png bytes", "image/png")},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["stage"] == "requirements"
+    assert body["requirements"]["summary"] == "A todo app."
+    fakes["diagram_interpreter"].interpret.assert_not_called()
+    fakes["design_analyzer"].analyze.assert_not_called()
+
+
+def test_start_run_from_upload_with_diagram_image_jumps_to_architecture(
+    client: TestClient, fakes: dict[str, MagicMock]
+) -> None:
+    """A PNG classified as a system design diagram skips the requirements
+    pipeline entirely and lands the new session directly in
+    STAGE_ARCHITECTURE, through the same validate/render/persist tail
+    accept_run uses."""
+    fakes["image_classifier"].classify.return_value = ImageClassification(
+        kind="diagram", reasoning="It's boxes and arrows depicting services."
+    )
+    fakes["diagram_interpreter"].interpret.return_value = make_design(
+        architecture_summary="Redrawn from the uploaded diagram."
+    )
+    fakes["validator"].validate.side_effect = lambda design: design
+    fakes["diagram_generator"].generate.return_value = "<svg></svg>"
+    fakes["artifact_store"].save_design_json.return_value = "dev/x/design/v1.json"
+    fakes["artifact_store"].save_design_svg.return_value = "dev/x/design/v1.svg"
+    fakes[
+        "artifact_store"
+    ].save_source_file.return_value = "dev/x/requirements/v1_source.png"
+    fakes["artifact_store"].save.return_value = "dev/x/requirements/v1.json"
+
+    response = client.post(
+        "/requirements-runs/upload",
+        files={"file": ("diagram.png", b"fake png bytes", "image/png")},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["stage"] == "architecture"
+    assert body["design_version"] == 1
+    assert (
+        body["design"]["architecture_summary"] == "Redrawn from the uploaded diagram."
+    )
+    # A stub requirements artifact is still populated so the Requirements
+    # tab isn't blank, even though nothing was typed or OCR'd.
+    assert body["requirements"] is not None
+    assert "uploaded system design diagram" in body["requirements"]["summary"]
+    fakes["requirements_analyzer"].analyze.assert_not_called()
+    fakes["store"].create.assert_called_once()
+
+
+def test_start_run_from_upload_rejects_when_image_classification_fails(
+    client: TestClient, fakes: dict[str, MagicMock]
+) -> None:
+    fakes["image_classifier"].classify.side_effect = ImageClassificationError("boom")
+
+    response = client.post(
+        "/requirements-runs/upload",
+        files={"file": ("mystery.jpg", b"fake jpg bytes", "image/jpeg")},
+    )
+
+    assert response.status_code == 422
+    fakes["store"].create.assert_not_called()
+
+
+def test_start_run_from_upload_rejects_when_diagram_interpretation_fails(
+    client: TestClient, fakes: dict[str, MagicMock]
+) -> None:
+    fakes["image_classifier"].classify.return_value = ImageClassification(
+        kind="diagram", reasoning="Boxes and arrows."
+    )
+    fakes["diagram_interpreter"].interpret.side_effect = DiagramInterpretationError(
+        "boom"
+    )
+
+    response = client.post(
+        "/requirements-runs/upload",
+        files={"file": ("diagram.png", b"fake png bytes", "image/png")},
+    )
+
+    assert response.status_code == 422
+    fakes["store"].create.assert_not_called()
+
+
+def test_refine_run_from_upload_with_diagram_image_jumps_to_architecture(
+    client: TestClient, fakes: dict[str, MagicMock]
+) -> None:
+    record = SessionRecord(
+        session_id="abc-123",
+        requirements_version=1,
+        requirements=make_requirements(),
+    )
+    fakes["store"].get.return_value = record
+    fakes["image_classifier"].classify.return_value = ImageClassification(
+        kind="diagram", reasoning="Boxes and arrows depicting components."
+    )
+    fakes["diagram_interpreter"].interpret.return_value = make_design(
+        architecture_summary="Redrawn from the uploaded diagram."
+    )
+    fakes["validator"].validate.side_effect = lambda design: design
+    fakes["diagram_generator"].generate.return_value = "<svg></svg>"
+    fakes["artifact_store"].save_design_json.return_value = "dev/abc-123/design/v1.json"
+    fakes["artifact_store"].save_design_svg.return_value = "dev/abc-123/design/v1.svg"
+    fakes[
+        "artifact_store"
+    ].save_source_file.return_value = "dev/abc-123/requirements/v1_source.png"
+
+    response = client.post(
+        "/requirements-runs/abc-123/refine/upload",
+        files={"file": ("diagram.png", b"fake png bytes", "image/png")},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["stage"] == "architecture"
+    assert body["design_version"] == 1
+    # Requirements already existed on this session — the diagram branch
+    # must not overwrite them with a stub.
+    assert body["requirements"]["summary"] == "A todo app."
+    fakes["requirements_analyzer"].analyze.assert_not_called()
+
+
+def test_refine_run_from_upload_with_diagram_image_blocked_outside_requirements(
+    client: TestClient, fakes: dict[str, MagicMock]
+) -> None:
+    """The existing stage gate runs before image classification even
+    starts — an image upload doesn't bypass it."""
+    record = SessionRecord(session_id="abc-123", stage="architecture")
+    fakes["store"].get.return_value = record
+
+    response = client.post(
+        "/requirements-runs/abc-123/refine/upload",
+        files={"file": ("diagram.png", b"fake png bytes", "image/png")},
+    )
+
+    assert response.status_code == 409
+    fakes["image_classifier"].classify.assert_not_called()

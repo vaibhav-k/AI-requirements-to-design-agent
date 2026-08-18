@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import mimetypes
 import os
 
@@ -13,6 +14,8 @@ from dotenv import load_dotenv
 from app.models import StoredArtifact
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 AZURE_CONNECTION_STRING = os.getenv(
@@ -328,6 +331,13 @@ class ArtifactStore:
             content_settings=ContentSettings(
                 content_type=content_type,
             ),
+        )
+
+        logger.info(
+            "Artifact saved to Azure Blob Storage: container=%s blob=%s url=%s",
+            self.container.container_name,
+            blob_name,
+            blob.url,
         )
 
         return blob_name

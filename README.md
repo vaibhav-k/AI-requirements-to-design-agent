@@ -4,9 +4,19 @@ An AI-powered requirements engineering agent that transforms natural-language so
 
 ## Current Status
 
-**MVP-2 — Requirements to High-Level System Design**
+**MVP-2 is complete; MVP-3 (Design Refinement) is in progress.**
 
-The application now implements the MVP-2 architecture pipeline with the following capabilities:
+MVP-2's full requirements→architecture pipeline shipped, and three of
+MVP-3's six planned items are also already done — architecture
+refinement, architecture version comparison, and the human approval
+workflow. What's left to close out MVP-3: requirement-to-architecture
+coverage analysis, architecture impact analysis, architecture decision
+records (ADRs), and a unified architecture change history. See
+"Roadmap" → "MVP-3 — Design Refinement" for the checklist and "Path to
+MVP-3 Completion" (just below it) for concrete next steps on each
+remaining item.
+
+Capabilities implemented so far:
 
 * Natural-language requirements input
 * AI-powered requirements analysis
@@ -35,9 +45,25 @@ The application now implements the MVP-2 architecture pipeline with the followin
   the original uploaded file is persisted in Blob Storage alongside the
   extracted-text artifact; see "Next Steps" → "File Upload for
   Requirements Scanning" below
+* Image input classification — an uploaded PNG/JPG/JPEG is automatically
+  classified as a document screenshot (processed as usual, above) or a
+  system design/workflow diagram (redrawn directly into a structured,
+  well-architected system design, jumping straight to the architecture
+  stage); see "Next Steps" → "Image Input Classification" below
 * Graphviz architecture diagrams
 * SVG diagram generation
 * External dependencies represented in architecture diagrams
+* Domain-clustered diagram layout — components are grouped into labeled,
+  dashed clusters by their `domain`, laid out left-to-right with
+  right-angle edges, keeping related components visually together and
+  edges short instead of scattered across the page; see "Next Steps" →
+  "Architecture Diagram Clustering & Clutter Reduction" below
+* Azure Architecture Icons on every diagram node — components and
+  external dependencies render with a real, recognizable Azure service
+  icon (Kubernetes, SQL Database, Key Vault, etc.) instead of a plain
+  box, matched from the component's/dependency's name and
+  responsibility/purpose text; see "Next Steps" → "Diagram Icons (Azure
+  Architecture Icons)" below
 * Stronger failure handling around architecture generation and validation
 * Azure Blob Storage for architecture artifacts
 * MCP adapter covering the full requirements-to-architecture flow —
@@ -53,6 +79,12 @@ The application now implements the MVP-2 architecture pipeline with the followin
   and runs locally/on-demand only, not on the actual GitHub remote yet; see
   the note in "Project Structure" for why
 * FastAPI web layer with Entra ID (Azure AD) bearer-token authentication
+* Role-based access control (RBAC) on top of that authentication — Entra
+  ID App Roles (`User`/`Architect`/`Reviewer`/`Admin`) gate which actions a
+  caller may perform (create/refine requirements, generate/refine an
+  architecture, approve/reject one), with `Admin` additionally bypassing
+  per-owner session isolation; see "Web API & Authentication" →
+  "RBAC (Role-Based Access Control)" below
 * Cosmos DB-backed session state for the web API (`CosmosSessionStore`)
 * Requirements → architecture flow exposed over HTTP
   (`/requirements-runs` start/refine/accept/refine-architecture, plus
@@ -470,6 +502,124 @@ typical SPA-plus-API setup would split those across two registrations.
 
 ---
 
+### RBAC (Role-Based Access Control)
+
+Authentication (above) establishes *that* a caller is a valid user in the
+tenant. RBAC is the layer on top: *which actions* that caller may perform,
+based on Entra ID **App Roles** assigned to them. It's implemented
+entirely in `app/security/auth.py` (`require_role`, `roles_of`) and
+`app/api/ownership.py` (`is_admin`) — see those modules' docstrings for the
+mechanics; this section is the setup + permission matrix.
+
+**Roles:**
+
+| Role | Can do |
+| --- | --- |
+| `User` | Create and refine requirements on their own sessions (`POST /requirements-runs`, `.../refine`, and their `/upload` siblings) |
+| `Architect` | Generate and refine an architecture on their own sessions (`POST .../accept`, `.../refine-architecture`) |
+| `Reviewer` | Approve or reject an architecture on their own sessions (`POST .../approve`, `.../reject`) |
+| `Admin` | Everything above, on **every** session regardless of owner — passes every `require_role` check automatically and bypasses the ownership check in `app/api/ownership.py` entirely |
+
+Renaming a session (`POST .../rename`, setting the display label the UI
+shows in the sessions pane) is open to any of `User`/`Architect`/`Reviewer`
+on their own sessions (`Admin` on any session) — the same "any functional
+role, own session" shape as the read routes below, since it's a metadata
+edit rather than a stage-advancing action tied to one role.
+
+Every read route (`GET /requirements-runs`, `GET .../{id}`, and the whole
+`app/api/routes/artifacts.py` router — version history, architecture
+content, diagrams) accepts any of `User`/`Architect`/`Reviewer` (`Admin`
+implicit). Ownership is a separate, narrower question than the role check:
+a `User` can only create/refine requirements on sessions *they* own; an
+`Architect`/`Reviewer` likewise can only act on their own sessions — RBAC
+here gates *which actions* a role may perform, not whose sessions it can
+see, except for `Admin`, which is explicitly cross-user by design
+("Admins can manage users and access across the system"). Since `GET
+/requirements-runs` returns every session for an `Admin` rather than only
+their own (`list_all` vs. `list_for_owner`, see
+`app/infrastructure/session_store.py`), `RequirementsRunView` includes
+`owner_name` so the frontend's sessions pane can label whose session is
+whose when it isn't the signed-in caller's own — see `Sidebar.tsx`.
+
+A caller with **no App Role assigned at all** — including one with a
+perfectly valid, correctly-issued token — gets **403 on every route**,
+including read routes. This is a deliberate choice: authentication alone
+doesn't grant access to anything, only a role does. If you enable
+`AUTH_ENABLED=true` and start getting 403s with a message like "This
+action requires one of these roles: ...", the fix is almost always "this
+user needs an app role assignment" (step 4 below), not a code change.
+
+RBAC is a no-op — every `require_role` check passes and ownership is
+skipped — whenever `AUTH_ENABLED=false`, exactly like `require_user`: local
+development and CI never need roles (or a real Entra ID tenant) configured.
+
+**Setup, on top of the app registration from the previous section:**
+
+1. **Define the App Roles** — on the app registration, left sidebar → **App
+   roles** → **Create app role**, once for each of `User`, `Architect`,
+   `Reviewer`, `Admin`:
+   * **Display name**: whatever's readable (e.g. "Requirements Author").
+   * **Allowed member types**: **Users/Groups** (this project reads roles
+     off user tokens, not app-to-app/client-credential tokens).
+   * **Value**: must be exactly `User`, `Architect`, `Reviewer`, or
+     `Admin` — this is the literal string `roles_of` matches against the
+     token's `roles` claim, not the display name.
+   * **Description**: whatever's useful for whoever assigns it later.
+   * Leave **Enabled** checked.
+
+2. **Assign roles to users** — Azure Portal → **Enterprise applications** →
+   this app (**not** "App registrations" — role *assignment* happens on
+   the enterprise application object even though the roles themselves were
+   *defined* on the registration) → **Users and groups** → **Add
+   user/group** → pick a user → pick one of the roles from step 1 → assign.
+   A user can hold more than one role (e.g. both `User` and `Architect`);
+   assign each separately.
+
+3. **Nothing else changes** — the same access token `get_dev_token.py`
+   already knows how to acquire (or a real frontend's MSAL sign-in) now
+   carries a `roles` claim listing whatever was assigned in step 2; no new
+   scope, permission, or `.env` variable is needed for RBAC itself.
+
+**Checking what roles landed in a token:** `GET /me` (`app/web/main.py`'s
+`whoami`) echoes back `roles` alongside the existing `authenticated`/
+`principal`/`oid` fields — `curl http://localhost:8000/me -H "Authorization:
+Bearer <token>"` is the quickest way to confirm an assignment actually took
+effect, without needing to decode the JWT by hand. The frontend uses this
+same endpoint (`useCurrentUser.ts`) to grey out actions the signed-in
+user's role doesn't permit — see "Frontend" below.
+
+**A role change doesn't retroactively update an already-issued token** —
+MSAL/the OAuth flow bakes the `roles` claim in at token issuance, so after
+assigning yourself a new role in step 2 above, sign out and sign back in
+(not just wait for silent refresh) to get a token that reflects it.
+
+**What was considered and deliberately left out:**
+
+* **Entra ID security groups instead of App Roles** — groups would reuse
+  directory groups you might already have, but need either the `groups`
+  claim (which has a size limit and "group overage" fallback requiring a
+  Microsoft Graph call to resolve) or a separate app-defined mapping from
+  group ID to role name. App Roles surface directly as role *names* in the
+  `roles` claim with no size limit or extra API call, and are the approach
+  Microsoft's own docs recommend for API authorization — simpler for a
+  project this size.
+* **No role hierarchy beyond `Admin`** — `User`/`Architect`/`Reviewer` are
+  independent grants, not tiers (an `Architect` cannot also approve without
+  also being assigned `Reviewer`). Only `Admin` is a superset, and that's
+  a deliberate single special case (`require_role` checks for it
+  explicitly) rather than a general tier system, since the three
+  functional roles don't have a natural ordering — an `Architect` isn't
+  "more" than a `Reviewer`, just different.
+* **No cross-user access for `Architect`/`Reviewer` on sessions they don't
+  own** — only `Admin` bypasses ownership. In this project's model each
+  session has a single owner throughout its lifecycle; if a workflow needs
+  a different Architect/Reviewer than whoever created the session, sharing
+  a session across owners is a separate, unimplemented feature (a "team"
+  or "collaborators" concept), not something RBAC alone should silently
+  enable.
+
+---
+
 ## Frontend
 
 `frontend/` is a React + Vite + TypeScript app built as a chat-first
@@ -483,7 +633,23 @@ quick manual API testing, but aren't a product surface.
 **Layout — three connected areas:**
 
 * **Sidebar** (`Sidebar.tsx`) — the caller's own sessions
-  (`GET /requirements-runs`) plus "New session".
+  (`GET /requirements-runs`) plus "New session". Each session can be
+  renamed inline (the pencil button next to it) — `POST .../rename`, greyed
+  out with a tooltip the same way Send/Accept/Approve are when the signed-in
+  caller holds none of `User`/`Architect`/`Reviewer` (`Admin` implicit; see
+  the README's RBAC section). A session's own generated name falls back to
+  a shortened `session_id` until it's renamed. For an `Admin` — the only
+  caller `GET /requirements-runs` ever returns *other* people's sessions to
+  — each entry also shows who started it (`owner_name`, or "unowned" for a
+  session created before ownership tracking existed, or while
+  `AUTH_ENABLED` was off, which genuinely has no owner to report); for
+  anyone else every session shown is already their own, so this is never
+  displayed. The
+  pane itself is resizable (drag its right edge) and collapsible (the `«`
+  toggle in its header, `»` to bring it back) — purely a client-side layout
+  preference, persisted in `localStorage`, with no effect on what data is
+  fetched or shown once expanded. The conversation/artifact split in the
+  Workspace area is resizable the same way (drag the handle between them).
 * **Conversation** (`Workspace.tsx` + `Conversation.tsx`) — the AI
   interaction layer. Starting a session, refining requirements, accepting
   them to generate an architecture, refining that architecture, and
@@ -519,7 +685,18 @@ quick manual API testing, but aren't a product surface.
   Steps" → "File Upload for Requirements Scanning" below). A dashed
   **Source: `<filename>`** pill appears next to the status pill whenever
   the current requirements version came from an uploaded file rather than
-  typed text.
+  typed text. Send/Scan a file/Accept/Approve/Reject are each greyed out
+  (with a tooltip naming the missing role, e.g. "Requires the Architect
+  role.") rather than hidden, whenever the signed-in caller's Entra ID App
+  Role doesn't permit that specific action — see `useCurrentUser.ts`
+  (fetches `GET /me`'s `roles`) and `permissions.ts`. This is a UI
+  convenience only, not the enforcement: the backend's own `require_role`
+  is what actually decides, so a role revoked after the page loaded (or
+  simply not yet reflected in a stale fetch) still gets caught server-side
+  — surfaced as "You don't have permission to do this: ..." rather than
+  the raw backend detail alone, distinct from "You're not signed in.
+  Sign in above and try again." for a 401 (no token at all) — see
+  `Workspace.tsx`'s `friendlyErrorMessage`.
 * **Artifacts** (`ArtifactPanel.tsx`) — tabs for Requirements and
   Architecture, each backed by `app/api/routes/artifacts.py`:
   * `RequirementsView.tsx` — summary, business goal, actors,
@@ -552,9 +729,20 @@ quick manual API testing, but aren't a product surface.
   chat-first, whitespace-generous layout — not a literal skin of any
   particular product's brand colors or typography.
 
-**What's deliberately not covered yet:** polling for sessions stuck on
-`"generating"` (see "Recover sessions stuck on `generating`" below), and
-any automated frontend tests.
+The sidebar polls `GET /requirements-runs` every 5 seconds (in addition to
+refetching immediately whenever this tab itself starts a session) so a
+session's stage — including one another tab, or another user entirely for
+an Admin, is actively generating — updates without needing to switch away
+and back. This is a live *view* of whatever stage the backend actually
+reports; it doesn't do anything about a session that's genuinely stuck
+(see "Recover sessions stuck on `generating`" below) — a truly wedged
+record just keeps polling back as `"generating"` forever, the same as
+before, only without needing a manual refresh to see that it's still stuck.
+
+**What's deliberately not covered yet:** automatically recovering a session
+stuck on `"generating"` (see "Recover sessions stuck on `generating`"
+below — the sidebar polling above surfaces that state live, it doesn't fix
+it), and any automated frontend tests.
 
 ### Running it locally
 
@@ -793,6 +981,8 @@ requirements-agent/
 │   ├── session.py
 │   ├── storage.py
 │   ├── config.py
+│   ├── ingestion.py
+│   ├── vision.py
 │   │
 │   ├── design/
 │   │   ├── __init__.py
@@ -800,6 +990,12 @@ requirements-agent/
 │   │   ├── analyzer.py
 │   │   ├── validator.py
 │   │   ├── diagram.py
+│   │   ├── comparison.py
+│   │   ├── icons.py
+│   │   ├── icons/
+│   │   │   └── azure/
+│   │   │       ├── NOTICE.md
+│   │   │       └── *.png  (23 vendored Azure Architecture Icons)
 │   │   └── session.py
 │   │
 │   ├── mcp/
@@ -862,12 +1058,17 @@ requirements-agent/
 │   ├── test_analyzer.py
 │   ├── test_storage.py
 │   ├── test_refinement.py
+│   ├── test_ingestion.py
 │   ├── test_design_analyzer.py
 │   ├── test_design_validator.py
 │   ├── test_design_diagram.py
 │   ├── test_design_storage.py
+│   ├── test_design_comparison.py
+│   ├── test_design_icons.py
 │   ├── test_mcp.py
 │   ├── test_auth.py
+│   ├── test_rbac.py
+│   ├── test_ownership.py
 │   ├── test_web_main.py
 │   ├── test_session_store.py
 │   ├── test_requirements_routes.py
@@ -1291,37 +1492,39 @@ design/
 └── v1.svg
 ```
 
-**Layout is deliberately compact, not exhaustive:**
+**Layout, current state — see "Architecture Diagram Clustering & Clutter
+Reduction" and "Diagram Icons (Azure Architecture Icons)" below for the
+full history and reasoning; summarized here:**
 
-* Node boxes show only `{id}\n{name}` (e.g. `C-001` / `User Interaction
-  Component`) — the full responsibility/purpose text is left out of the box
-  on purpose, since it's already shown in the Requirements/Architecture text
-  panel (and in the frontend's `ArchitectureView.tsx`). It's still attached
-  to each node/edge as a Graphviz `tooltip`, which renders as a native
-  browser hover tooltip (`xlink:title`) without touching the node's own
-  `<title>` — the frontend's `DiagramViewer.tsx` click-to-inspect depends
-  on that `<title>` staying exactly the component id.
-* The graph is sized and laid out for a US Letter page in portrait
-  (`size="7.5,10"`, `rankdir="TB"`) with tight `nodesep`/`ranksep`, small
-  fonts (11pt nodes, 9pt edges), and no forced minimum box size. Components
-  and external dependencies are manually wrapped into fixed-width rows of
-  `ArchitectureDiagramGenerator.NODES_PER_ROW` (4 by default) using Graphviz
-  `rank=same` subgraphs chained top-to-bottom with invisible anchor edges,
-  rather than left to a plain topological layout — a plain layout puts one
-  node per rank along the flow direction, so a large design still produces
-  one long row (just rotated vertical instead of horizontal) regardless of
-  `rankdir`, which is what previously forced horizontal scrolling on bigger
-  architectures even with `ratio="compress"` (per the Graphviz docs,
-  `ratio="compress"` combined with `size` "does not necessarily result in a
-  layout satisfying the given size"). With row-wrapping, diagram *width*
-  stays fixed at the page width no matter how many components exist —
-  height grows instead, so larger designs page/scroll vertically rather
-  than horizontally. Real interface and dependency-usage edges are marked
-  `constraint="false"` so they render as directional arrows without fighting
-  the manually-imposed row order.
+* Every component renders as a small icon (see "Diagram Icons" below)
+  above an `{id}\n{name}` caption (e.g. `C-001` / `User Interaction
+  Component`) — the full responsibility/purpose text is left out on
+  purpose, since it's already shown in the Requirements/Architecture
+  text panel (and in the frontend's `ArchitectureView.tsx`). It's still
+  attached to each node/edge as a Graphviz `tooltip`, which renders as a
+  native browser hover tooltip (`xlink:title`) without touching the
+  node's own `<title>` — the frontend's `DiagramViewer.tsx`
+  click-to-inspect depends on that `<title>` staying exactly the
+  component id.
+* Components are grouped into one dashed, labeled cluster per
+  `DesignComponent.domain`, laid out left-to-right (`rankdir="LR"`) with
+  no fixed page size — a design can be as wide/tall as its actual
+  content needs; the frontend's `DiagramViewer` zoom/pan handles the
+  rest. Within a domain's cluster, components stack in a single column
+  (chained top-to-bottom by ordinary directed edges, not a
+  `rank=same` grid) — see "Architecture Diagram Clustering & Clutter
+  Reduction" for why a `rank=same` grid isn't used here.
+* Edges route as straight, right-angle lines (`splines="ortho"`) rather
+  than curved splines, and carry their name as an `xlabel` (not `label`
+  — `dot` doesn't position plain `label` text correctly on orthogonal
+  edges) — suppressed above `ArchitectureDiagramGenerator
+  .MAX_LABELED_EDGES` total edges to avoid cluttering a dense diagram
+  with dozens of small text strings; full detail remains available via
+  each edge's tooltip regardless.
 * Component-to-external-dependency ("used by") edges are dashed and
   dependency-colored, visually distinct from interface edges at a glance
-  rather than only distinguishable by reading their labels.
+  rather than only distinguishable by reading their labels; only the
+  first edge into a given dependency repeats its name as a label.
 
 Graphviz must be installed separately because the Python `graphviz` package invokes the Graphviz `dot` executable.
 
@@ -1354,6 +1557,15 @@ also provides a foundation for:
 * Design evolution
 * Future approval workflows
 * Architecture change tracking
+
+Every save goes through `ArtifactStore._upload` (`app/storage.py`), which
+logs the resulting blob path after a successful upload — one `logger.info`
+call covers every artifact type (requirements JSON, design JSON, diagram
+SVG, uploaded source files) since they all funnel through this one method:
+
+```text
+Artifact saved to Azure Blob Storage: container=requirements blob=dev/<session-id>/design/v2.svg url=https://<account>.blob.core.windows.net/requirements/dev/<session-id>/design/v2.svg
+```
 
 ---
 
@@ -1475,7 +1687,11 @@ AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT=https://<resource>.cognitiveservices.azure.
 AZURE_DOCUMENT_INTELLIGENCE_KEY=<key>
 ```
 
-The exact variables used by the application should match `.env.example`.
+The web API additionally reads `AUTH_ENABLED`, `ENTRA_TENANT_ID`,
+`ENTRA_CLIENT_ID`, `ENTRA_API_SCOPE`, `HOST`, `PORT`,
+`CORS_ALLOW_ORIGINS`, and the `COSMOS_*` session-store variables — see
+"Web API & Authentication" above for those, rather than repeating them
+here. The exact variables used by the application should match `.env.example`.
 
 ---
 
@@ -1847,7 +2063,60 @@ Planned:
 * [x] Human approval workflow — `POST .../approve`/`POST .../reject`
       (web API only, no MCP tool yet); see "Next Steps" → "Human Approval
       Workflow" below for what shipped vs. what was deliberately left out
-* [ ] Architecture change history
+* [ ] Architecture change history — partially covered today by
+      `GET .../architecture/compare` (diff between two versions) and
+      `SessionRecord.approval_history` (who approved/rejected which
+      version and when); what's still missing is a single endpoint that
+      merges both into one chronological timeline per session, so a
+      caller isn't stitching two separate history sources together
+
+## Path to MVP-3 Completion
+
+Recommended order for the four remaining checklist items above, each
+building on the last (coverage needs the existing traceability graph;
+impact analysis reuses coverage's dependency graph; ADRs and change
+history are independent and can slot in anywhere once the others land):
+
+1. **Requirement-to-architecture coverage analysis** (see "Next Steps" →
+   "Requirement-to-Architecture Coverage" below for the full spec).
+   Concretely: add `app/design/coverage.py` with a
+   `compute_coverage(design) -> CoverageReport` function that walks the
+   existing `traces` on each `DesignComponent`/`ComponentInterface`
+   against `RequirementsArtifact.requirements`, classifying each
+   requirement `covered` / `partial` / `uncovered` and flagging any
+   component/interface with an empty `traces` list. Expose it as
+   `GET /requirements-runs/{id}/architecture/coverage` (web API,
+   mirroring `app/design/comparison.py` + its route) and as a
+   `get_architecture_coverage` MCP tool (stateless — takes a
+   `RequirementsArtifact` + `SystemDesignArtifact`, same pattern as
+   `validate_system_design`). Add `tests/test_design_coverage.py`.
+2. **Architecture impact analysis** (see "Next Steps" → "Architecture
+   Impact Analysis" below). Concretely: add
+   `app/design/impact.py` with `compute_impact(design, requirement_id)
+   -> ImpactReport`, reusing the same traceability graph coverage
+   analysis builds — this is the reason coverage should land first.
+   Expose as `GET .../architecture/impact?requirement_id=...` and an
+   `analyze_impact` MCP tool (the one MCP gap called out in the "MCP
+   Tool Expansion" section below that has no other blocker).
+3. **Architecture Decision Records** (see "Next Steps" → "Architecture
+   Decision Records" below). Concretely: add an `ArchitectureDecisionRecord`
+   Pydantic model (`app/design/models.py`), persist it the same way as
+   other artifacts (`ArtifactStore.save_adr`/`get_adr`, versioned per
+   session like design JSON/SVG), and add
+   `POST`/`GET /requirements-runs/{id}/architecture/decisions` routes.
+   No MCP tool needed yet — start web-API-only, same call this project
+   made for the human approval workflow.
+4. **Architecture change history** — once coverage/impact/ADRs exist,
+   add one `GET .../architecture/history` endpoint that merges
+   `list_design_versions`, `approval_history`, and (once step 3 lands)
+   ADR entries into a single chronological feed; this is largely
+   aggregation over data that already exists rather than new analysis.
+
+Each item should ship with: a stateless pure-function core (testable
+without Azure credentials, matching `validator.py`/`comparison.py`'s
+style), a web API route, automated tests, and a README update to this
+file's "Next Steps" and "MVP Checklist" sections marking it done — the
+same pattern used for every completed MVP-3 item so far.
 
 ## Future
 
@@ -2317,6 +2586,264 @@ What was considered and deliberately left out:
 
 ---
 
+## Image Input Classification
+
+**Done.**
+
+An uploaded PNG/JPG/JPEG could mean two very different things: a
+screenshot/photo of *text* meant to be read (requirements notes, a spec,
+a whiteboard of bullet points), or a photo/screenshot of a *system
+design or workflow diagram* — boxes and arrows depicting components and
+data flow — meant to be understood structurally rather than read as
+prose. Running OCR + requirements analysis on the latter would, at best,
+transcribe box labels as if they were requirements text. This feature
+classifies every uploaded image first and routes it accordingly:
+
+* A **document** screenshot → processed exactly as before (OCR via
+  Document Intelligence → `RequirementsAnalyzer`).
+* A **diagram** → redrawn directly into a clean, well-architected system
+  design and dropped straight into the architecture stage, skipping
+  typed/extracted requirements text entirely.
+
+Implemented:
+
+* `app/vision.py` (new) — `ImageInputClassifier.classify(content,
+  filename) -> ImageClassification` (`kind: "document" | "diagram"` plus
+  a one-sentence `reasoning`) and `DiagramImageInterpreter.interpret(...)
+  -> SystemDesignArtifact`, both calling Azure OpenAI's Responses API
+  with multimodal input (an `input_image` data URL alongside
+  `input_text`) against the same vision-capable `AZURE_OPENAI_MODEL`
+  deployment every other analyzer already requires — no new environment
+  variable. `DiagramImageInterpreter` reuses the exact
+  `SystemDesignArtifact` schema `SystemDesignAnalyzer` produces from
+  text, so an image-derived design is indistinguishable downstream
+  (validation, diagram rendering, versioning, refinement, approval) from
+  a text-derived one. It also supports refinement: passing the session's
+  `previous_design` treats a later diagram upload as amending that
+  design rather than replacing it outright, mirroring
+  `SystemDesignAnalyzer.analyze`'s "preserve what's still valid"
+  contract.
+* `app/ingestion.py` — `is_image_filename()` identifies which uploads
+  (`.png`/`.jpg`/`.jpeg`) are eligible for classification before falling
+  into the existing extraction path.
+* `app/design/session.py` — `ArchitectureSession.generate()` was split
+  into `generate()` (analyze requirements text → design) and
+  `generate_from_design()` (validate → render → persist), so a
+  diagram-derived design can go through the exact same
+  validate/render/persist tail as a text-derived one without a parallel,
+  divergent copy of that logic.
+* `POST /requirements-runs/upload` / `POST .../{id}/refine/upload` — the
+  same upload routes from "File Upload for Requirements Scanning" above
+  now branch on `is_image_filename()`. A classified `"document"` image
+  proceeds through the pre-existing OCR pipeline unchanged. A classified
+  `"diagram"` image skips straight to `ArchitectureSession
+  .generate_from_design()`: the session's `stage` jumps directly to
+  `architecture`, `approval_status` resets to `pending`, and a stub
+  `RequirementsArtifact` (empty requirement lists, a summary noting the
+  session started from a diagram upload) backfills the requirements slot
+  so every existing reviewer-facing view that expects a
+  `RequirementsArtifact` still has one to show. `refine/upload`'s
+  existing `STAGE_REQUIREMENTS`-only gate runs *before* classification,
+  so a diagram uploaded against a session already past that stage still
+  gets the same 409 as a document upload would, rather than silently
+  reclassifying an already-generated architecture.
+* Classification/interpretation failures (`ImageClassificationError`,
+  `DiagramInterpretationError` — e.g. Azure OpenAI is unreachable, or
+  returns no parsed output) surface as `422`, matching how
+  `DocumentExtractionError` is already handled for the document path.
+
+What was considered and deliberately left out:
+
+* **A user-facing override to force one classification or the other** —
+  left out for now since the classifier's system prompt is deliberately
+  conservative (text with a few incidental boxes/icons still counts as
+  `"document"`); revisit if misclassifications turn out to be common in
+  practice.
+* **Multi-image uploads treated as one diagram** — each upload is
+  classified and interpreted independently, same granularity as the
+  existing single-file document upload routes.
+
+---
+
+## Architecture Diagram Clustering & Clutter Reduction
+
+**Done.**
+
+Diagrams for any design with more than a handful of components and
+interfaces used to render as a "hairball": long, curved edges crossing
+the whole page, no visual grouping between related components, and
+inline edge-label text scattered everywhere. Root cause: every component
+was forced into one flat, page-wide grid (to keep the whole diagram on
+one printed page), and every real interface/dependency edge was drawn
+with `constraint="false"` so it couldn't influence where its endpoints
+landed — so two closely related components could land in unrelated
+grid cells, and the edge between them had to arc across the entire page
+to connect them.
+
+Implemented, in order of impact:
+
+* **Domain clustering** — `DesignComponent` gained an optional `domain`
+  field (a short group/category name, e.g. "Client & Identity", "Data
+  Platform"); `SystemDesignAnalyzer` and `DiagramImageInterpreter`
+  (`app/vision.py`) both prompt for it now — the latter reading it
+  directly off any visible grouping/labeled sections in an uploaded
+  diagram image, or inferring a small number of sensible domains when
+  the image has none. `ArchitectureDiagramGenerator` renders each domain
+  as its own labeled Graphviz cluster, so related components stay
+  visually together and most real edges stay short. A blank `domain`
+  (older designs, or anything constructing a `DesignComponent` directly)
+  falls back to a single "Other Components" cluster rather than
+  erroring.
+* **No forced one-page layout** — the fixed `size`/`ratio="compress"`
+  graph attributes are gone. The frontend's `DiagramViewer` already
+  supports zoom/pan, so letting Graphviz size the SVG to its actual
+  content produces straighter edges at the cost of not fitting on one
+  unscaled printed page.
+* **Real edges allowed to influence layout, within a domain** — an
+  interface between two components in the *same* domain is no longer
+  forced to `constraint="false"`; a cross-domain interface still is
+  (letting it pull on rank assignment would fight the cluster
+  boundaries instead of just being drawn as a longer arrow between two
+  independently-laid-out groups).
+* **Inline edge labels suppressed past a threshold** — above
+  `ArchitectureDiagramGenerator.MAX_LABELED_EDGES` (24) total real
+  edges, every edge's name is dropped from the rendered label text.
+  Full detail remains available via each edge's `tooltip` (shown on
+  hover), which the frontend already relies on.
+* **Deduplicated dependency fan-in labels** — a dependency used by
+  several components previously repeated its own name as the label on
+  every incoming edge. Now only the first edge shows the name inline;
+  the rest carry the same tooltip but no repeated label text.
+
+What was discovered and worked around along the way:
+
+* **A real `dot` crash, not just a design smell.** The first clustering
+  implementation nested `rank=same` "row grid" subgraphs inside each
+  domain's Graphviz cluster (to bound a domain's width). That
+  combination — `rank=same` inside a cluster, on a graph with enough
+  edges crossing between clusters — reliably crashes the installed
+  Graphviz `dot` build (2.43.0) with `class2.c:148: merge_chain:
+  Assertion 'ED_to_virt(e) == NULL' failed`, confirmed via local
+  reproduction at roughly 40+ components / 60+ interfaces across
+  several domains — well within what a real generated architecture can
+  reach. The fix was to lay out each domain's components as a single
+  top-to-bottom column instead (chained with ordinary directed
+  invisible edges, not same-rank/"flat" ones), which doesn't trigger the
+  bug at any tested scale (stress-tested up to 200 components / 300
+  interfaces without a crash) and, as a side benefit, more closely
+  matches how a typical hand-drawn reference architecture diagram
+  stacks a section's components in a single column anyway.
+* **Row-order pinning was dropped.** An earlier version of the (now
+  removed) row-grid pinned left-to-right order within a row using
+  invisible same-rank edges; that specific construct — a "flat" edge
+  between same-rank nodes inside a cluster — turned out to be the
+  crash trigger by itself, independent of the grid or clustering per
+  se. Since the column layout replacing it has no same-rank grouping
+  at all, there's nothing left to pin, and the cost of the earlier
+  cosmetic guarantee (nodes always exactly in source order) is gone
+  along with it — Graphviz's own layout decides top-to-bottom order,
+  which in practice still tracks input order closely.
+* **External dependencies are not clustered per-domain** — a dependency
+  is often used by components across several domains (see
+  `used_by_components`), so it has no single natural "home" domain.
+  They get their own dedicated cluster instead, using the same column
+  layout as domain clusters.
+
+Later, to match a specific reference Azure architecture diagram style
+requested directly (client apps → load balancer → AKS cluster →
+databases, dashed VNet boundary), the layout changed again on top of the
+column-per-cluster foundation above:
+
+* **`rankdir="LR"`** — diagrams now flow left-to-right instead of
+  top-to-bottom, matching how most hand-drawn/reference cloud
+  architecture diagrams are read. The column-layout crash fix above was
+  re-verified at scale (up to 20 domains / 300 interfaces) under `LR`
+  before shipping it — the crash was tied to `rank=same` inside a
+  cluster, not to `rankdir`, so switching direction didn't reopen it.
+* **`splines="ortho"`** — edges are straight lines with right angles
+  instead of curved splines, again matching the reference style. This
+  has one non-obvious consequence: `dot` doesn't position a plain
+  `label=` correctly on an orthogonal edge, so every edge's name moved
+  to `xlabel=` instead (see "Diagram Icons" below for a similar
+  Graphviz-quirk story on the node side).
+* **Real Azure service icons per node** — see "Diagram Icons (Azure
+  Architecture Icons)" directly below.
+
+---
+
+## Diagram Icons (Azure Architecture Icons)
+
+**Done.**
+
+Nodes used to render as plain boxes with just an id/name label — clear,
+but nothing like a real architecture diagram, where every component is
+instantly recognizable by its cloud service icon (the AKS logo, a SQL
+Database cylinder, the Key Vault key, and so on). `ArchitectureDiagramGenerator`
+now renders every component and external dependency with a real Azure
+Architecture Icon above its `{id}\n{name}` caption.
+
+**Where the icons came from.** Rather than add a heavyweight runtime
+dependency, a curated set of ~23 PNGs was vendored directly into the
+repo under `app/design/icons/azure/`, sourced once from the MIT-licensed
+`diagrams` Python package's bundled icon resources (it ships Microsoft's
+official Azure Architecture Icons under `resources/azure/...`). `diagrams`
+itself was installed only temporarily to copy the files out — it is
+**not** a project dependency and does not appear in `requirements.txt`.
+Each file was renamed to a short, stable slug (e.g. `key-vault.png`,
+`kubernetes.png`) decoupled from `diagrams`' internal path layout, so the
+icon set can be swapped for a different source later without touching
+`app/design/icons.py`. Full provenance and the slug → original-path
+mapping is documented in `app/design/icons/azure/NOTICE.md`.
+
+**How a component/dependency picks its icon.** `app/design/icons.py`
+matches a component's `name` and `responsibility` (or a dependency's
+`name` and `purpose`) against an ordered keyword table
+(`_KEYWORD_ICON_MAP`), falling back to a generic "service"/"external
+dependency" icon when nothing matches — every node gets *some* icon
+rather than mixing icon and plain-box nodes in one diagram. Two real
+mismatches were found via visual inspection of rendered test diagrams
+(not caught by unit tests alone) and fixed by (a) checking a node's
+`name` against every keyword in a first full pass before ever looking at
+its responsibility/purpose text, and (b) reordering the keyword table so
+specific multi-word phrases are checked before generic single-word
+fallbacks:
+
+* An external dependency named "Key Vault" with purpose "Secret
+  storage." rendered with a generic blob-storage icon, because the
+  generic keyword `"storage"` matched inside the purpose text before the
+  more specific `"key vault"`/`"secret"` keywords were ever reached.
+* A component named "CI/CD Pipeline" with a responsibility mentioning
+  "container images" rendered with a generic container icon instead of
+  the pipeline icon, for the same reason (`"container"` matched before
+  `"pipeline"`).
+
+Both are now locked in as regression tests in `tests/test_design_icons.py`.
+
+**Two Graphviz rendering quirks found and fixed along the way:**
+
+* **Image + label overlap on `shape="none"` nodes.** Setting both
+  `image=` and `label=` on a plain `shape="none"` node does not reserve
+  separate vertical space for the two — the caption text renders
+  overlapping the icon regardless of `labelloc`, in this Graphviz build.
+  Fixed by switching every node to an HTML-like label (`label="<<TABLE>
+  ...</TABLE>>"`): one table row holds the icon (`<IMG SRC=...>`), a
+  second row holds the `{id}\n{name}` caption, which lays out correctly.
+  Confirmed visually by rendering generated SVGs to PNG with `cairosvg`
+  and inspecting them directly.
+* **Local file paths don't survive into a browser-rendered SVG.**
+  Graphviz's SVG output references a node's icon by its literal
+  filesystem path (`xlink:href="/abs/path/icon.png"`), which resolves
+  fine when `dot` renders it locally but fails once that same SVG is
+  stored as an artifact and rendered client-side in the frontend's
+  `DiagramViewer.tsx` — the browser has no access to the backend's
+  filesystem. Fixed with a post-processing step
+  (`_inline_local_images`) that replaces every such
+  `xlink:href`/`href` attribute pointing at a local `.png` with a
+  base64 `data:image/png;base64,...` URI read from disk at generation
+  time, making the SVG fully self-contained.
+
+---
+
 ## 7. MCP Tool Expansion
 
 Expand the MCP adapter beyond the initial integration boundary.
@@ -2580,9 +3107,10 @@ MVP-3
   │
   ├── ✓ Architecture refinement
   ├── ✓ Version comparison
-  ├── Coverage analysis
+  ├── Coverage analysis          ← next up
   ├── Impact analysis
   ├── ADRs
+  ├── Change history
   └── ✓ Human approval
        │
        ▼
@@ -2602,4 +3130,13 @@ MVP-5
   └── Scalability analysis
 ```
 
-The immediate priority should be **Architecture Refinement + Version Comparison + Traceability Coverage**, because these features build directly on the MVP-2 foundation without prematurely expanding into implementation-specific design.
+MVP-2 is done, and MVP-3 is now three-sixths complete (refinement,
+version comparison, human approval). The immediate priority is
+**requirement-to-architecture coverage analysis**, followed by
+**impact analysis** (which reuses coverage's traceability graph) and
+then **ADRs** — see "Roadmap" → "Path to MVP-3 Completion" above for
+concrete implementation steps for each. Architecture quality analysis,
+deployment architecture, and IaC generation remain deliberately last —
+they depend on implementation-specific decisions this project has
+stayed technology-neutral about so far (see "Design Philosophy" →
+"Technology-neutral MVP-2 architecture" below).

@@ -57,9 +57,11 @@ from pydantic import BaseModel
 from app.analyzer import RequirementsAnalyzer
 from app.api.dependencies import (
     ArchitectureGenerationDependencies,
+    ImageUploadDependencies,
     RequirementsUploadDependencies,
     get_architecture_generation_dependencies,
     get_artifact_store,
+    get_image_upload_dependencies,
     get_requirements_analyzer,
     get_requirements_upload_dependencies,
     get_session_store,
@@ -76,11 +78,18 @@ from app.ingestion import (
     SUPPORTED_EXTENSIONS,
     DocumentExtractionError,
     RequirementsDocumentExtractor,
+    is_image_filename,
     is_supported_filename,
 )
 from app.models import RequirementsArtifact, StoredArtifact
 from app.security.auth import ROLE_ARCHITECT, ROLE_REVIEWER, ROLE_USER, require_role
 from app.storage import ArtifactStore
+from app.vision import (
+    DiagramImageInterpreter,
+    DiagramInterpretationError,
+    ImageClassificationError,
+    ImageInputClassifier,
+)
 
 # Route paths are relative to this prefix, set once here instead of repeated
 # as a literal on every @router decorator below (SonarQube S1192: string
@@ -122,8 +131,23 @@ class ApprovalDecisionRequest(BaseModel):
     reason: str | None = None
 
 
+class RenameRunRequest(BaseModel):
+    name: str
+
+
+MAX_NAME_LENGTH = 200
+
+
 class RequirementsRunView(BaseModel):
     session_id: str
+    name: str | None
+    owner_name: str | None
+    """Who started this session — only ever meaningful to the caller when
+    it's someone *else* (an Admin browsing every session via ``list_all``,
+    see ``list_runs``); for a non-Admin caller every session they can see is
+    already their own. Read-only here — only ``owner_fields``, at session
+    creation, ever sets it.
+    """
     stage: str
     requirements_version: int
     requirements: RequirementsArtifact | None
@@ -140,6 +164,8 @@ class RequirementsRunView(BaseModel):
     def from_record(cls, record: SessionRecord) -> RequirementsRunView:
         return cls(
             session_id=record.session_id,
+            name=record.name,
+            owner_name=record.owner_name,
             stage=record.stage,
             requirements_version=record.requirements_version,
             requirements=record.requirements,
@@ -173,17 +199,11 @@ def _persist_requirements_blob(
     return artifact_store.save(stored)
 
 
-async def _extract_text_from_upload(
-    file: UploadFile,
-    extractor: RequirementsDocumentExtractor,
-) -> tuple[str, bytes]:
-    """Validate and extract text from an uploaded file.
-
-    Shared by the ``/upload`` start and refine routes. Raises an
-    ``HTTPException`` (422) for anything that isn't the caller's fault to
-    retry differently server-side: an unsupported extension, an empty
-    file, or an extraction failure (bad encoding, Document Intelligence
-    unable to read the file, missing Document Intelligence credentials).
+async def _read_upload_content(file: UploadFile) -> tuple[str, bytes]:
+    """Validate an uploaded file's extension and non-emptiness, and return
+    its filename and raw bytes — the common first step for every upload
+    route, before either OCR extraction or (for an image) classification
+    decides what to do with those bytes.
     """
 
     filename = file.filename or ""
@@ -203,12 +223,183 @@ async def _extract_text_from_upload(
             f"{filename!r} is empty.",
         )
 
+    return filename, content
+
+
+def _extract_text_from_bytes(
+    filename: str,
+    content: bytes,
+    extractor: RequirementsDocumentExtractor,
+) -> str:
+    """OCR/plain-text extraction from already-read upload bytes — split out
+    from :func:`_extract_text_from_upload` so the image-classification path
+    below can reuse it without re-reading (and exhausting)
+    ``UploadFile.read()`` a second time.
+    """
+
     try:
-        text = extractor.extract(filename, content)
+        return extractor.extract(filename, content)
     except DocumentExtractionError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
 
+
+async def _extract_text_from_upload(
+    file: UploadFile,
+    extractor: RequirementsDocumentExtractor,
+) -> tuple[str, bytes]:
+    """Validate and extract text from an uploaded file.
+
+    Shared by the ``/upload`` start and refine routes for every supported
+    extension *except* an image classified as a diagram (see
+    ``_resolve_image_upload`` below, which every image upload goes through
+    instead) — a non-image upload always ends up here, and an image
+    classified as a document screenshot ends up here too, just via
+    ``_extract_text_from_bytes`` directly since its bytes were already read
+    for classification.
+    """
+
+    filename, content = await _read_upload_content(file)
+    text = _extract_text_from_bytes(filename, content, extractor)
     return text, content
+
+
+async def _resolve_image_upload(
+    file: UploadFile,
+    extractor: RequirementsDocumentExtractor,
+    classifier: ImageInputClassifier,
+    diagram_interpreter: DiagramImageInterpreter,
+    notes: str | None,
+) -> tuple[str, bytes, str, SystemDesignArtifact | None]:
+    """Classify an uploaded image and resolve it into either extracted text
+    or a directly-interpreted design — see the module-level docstring's
+    reference to ``app/vision.py`` for why an image needs this extra step
+    that a PDF/DOCX/TXT upload doesn't.
+
+    Returns ``(filename, content, text, design)``, where exactly one of
+    ``text``/``design`` is populated depending on the classification: a
+    ``"document"`` screenshot returns its OCR'd text with ``design=None``
+    (the caller proceeds through the same requirements pipeline as any
+    other upload); a ``"diagram"`` returns ``text=""`` and the interpreted
+    ``SystemDesignArtifact`` (the caller jumps straight to architecture —
+    see ``_apply_diagram_to_record``).
+    """
+
+    filename, content = await _read_upload_content(file)
+
+    try:
+        classification = classifier.classify(content, filename)
+    except ImageClassificationError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+
+    if classification.kind == "diagram":
+        try:
+            design = diagram_interpreter.interpret(content, filename, notes=notes)
+        except DiagramInterpretationError as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)
+            ) from exc
+        return filename, content, "", design
+
+    text = _extract_text_from_bytes(filename, content, extractor)
+    return filename, content, text, None
+
+
+def _stub_requirements_from_diagram(
+    design: SystemDesignArtifact,
+) -> RequirementsArtifact:
+    """A minimal ``RequirementsArtifact`` for a session whose architecture
+    came directly from an uploaded diagram image rather than typed or
+    OCR'd requirements text.
+
+    Keeps ``RequirementsRunView.requirements`` non-null — so the
+    Requirements tab isn't blank and ``requirements_version``/
+    ``requirements_blob`` stay meaningful — without inventing functional
+    requirements, actors, or constraints this project has no actual basis
+    for; those lists stay empty rather than guessed at from the diagram.
+    """
+
+    return RequirementsArtifact(
+        summary=(
+            "Derived from an uploaded system design diagram rather than "
+            f"typed requirements. {design.architecture_summary}"
+        ),
+        business_goal=(
+            "Not specified — this session started from a diagram upload "
+            "instead of typed requirements."
+        ),
+        actors=[],
+        functional_requirements=[],
+        non_functional_requirements=[],
+        data_requirements=[],
+        integration_requirements=[],
+        constraints=[],
+        assumptions=[],
+        open_questions=[],
+    )
+
+
+def _apply_diagram_to_record(
+    record: SessionRecord,
+    filename: str,
+    content: bytes,
+    design: SystemDesignArtifact,
+    image_deps: ImageUploadDependencies,
+) -> None:
+    """Mutate ``record`` in place to move it straight to
+    :data:`STAGE_ARCHITECTURE` from an interpreted diagram image.
+
+    Stubs requirements if none exist yet (see
+    ``_stub_requirements_from_diagram``), persists the source file, then
+    runs ``design`` through the exact same validate/render/persist pipeline
+    ``accept_run``/``refine_architecture`` use
+    (``ArchitectureSession.generate_from_design`` — see
+    ``app/design/session.py``), so an image-derived architecture is
+    indistinguishable, downstream, from a text-derived one. Raises
+    ``HTTPException`` (422) if validation/rendering fails, the same as
+    those routes. The caller is responsible for ``store.create``/
+    ``_upsert_guarded`` afterward — this only touches the in-memory record.
+    """
+
+    record.source_filename = filename
+
+    if record.requirements is None:
+        if record.requirements_version == 0:
+            record.requirements_version = 1
+        record.requirements = _stub_requirements_from_diagram(design)
+        record.requirements_blob = _persist_requirements_blob(
+            image_deps.artifact_store,
+            record,
+            f"[Uploaded diagram: {filename}]",
+            source_filename=filename,
+        )
+
+    record.source_file_blob = image_deps.artifact_store.save_source_file(
+        record.session_id, record.requirements_version, filename, content
+    )
+
+    design_session = ArchitectureSession(
+        analyzer=image_deps.design_analyzer,
+        diagram_generator=image_deps.diagram_generator,
+        validator=image_deps.validator,
+        store=image_deps.artifact_store,
+        session_id=record.session_id,
+        version=record.design_version,
+    )
+
+    try:
+        result = design_session.generate_from_design(design)
+    except DesignGenerationWorkflowError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+
+    record.stage = STAGE_ARCHITECTURE
+    record.design_version = result.version
+    record.design = result.design
+    record.design_blob = result.design_blob
+    record.diagram_blob = result.diagram_blob
+    # Same "a freshly (re)generated architecture has never been reviewed"
+    # reset accept_run/refine_architecture already apply.
+    record.approval_status = APPROVAL_PENDING
+    record.error = None
 
 
 def _require_stage(record: SessionRecord, expected: str, conflict_detail: str) -> None:
@@ -286,26 +477,59 @@ async def start_run_from_upload(
     deps: Annotated[
         RequirementsUploadDependencies, Depends(get_requirements_upload_dependencies)
     ],
+    image_deps: Annotated[
+        ImageUploadDependencies, Depends(get_image_upload_dependencies)
+    ],
     notes: Annotated[str | None, Form()] = None,
 ) -> RequirementsRunView:
-    """Start a run from an uploaded document instead of typed text.
+    """Start a run from an uploaded document, or a diagram image, instead
+    of typed text.
 
     Sibling of ``start_run``: same downstream pipeline (requirements
-    analysis, persistence), just fed extracted document text instead of a
-    JSON body's ``input`` field. FastAPI can't mix a JSON body with
+    analysis, persistence) for a document, just fed extracted text instead
+    of a JSON body's ``input`` field. FastAPI can't mix a JSON body with
     multipart ``UploadFile``/``Form`` parsing on one route, hence a
     separate route rather than an optional-file parameter on ``start_run``.
 
+    An uploaded PNG/JPG/JPEG is classified first (``app/vision.py``): a
+    document screenshot proceeds through that same requirements pipeline
+    (via ``_resolve_image_upload``, then unchanged from here on), while a
+    system design/workflow diagram instead jumps this brand-new session
+    straight to :data:`STAGE_ARCHITECTURE` — see
+    ``_apply_diagram_to_record``.
+
     ``notes`` is an optional plain-text field the caller can send alongside
     the file — e.g. "focus on the payments section" — appended to the
-    extracted document text before analysis, so a file upload doesn't
-    preclude adding a short instruction of its own.
+    extracted document text before analysis (or passed to the diagram
+    interpreter as additional context), so a file upload doesn't preclude
+    adding a short instruction of its own.
     """
     owner_oid, owner_name = owner_fields(request)
+    filename_hint = file.filename or ""
 
-    extracted_text, content = await _extract_text_from_upload(file, deps.extractor)
-    filename = file.filename or "upload"
-    source_text = f"{extracted_text}\n\n{notes}" if notes else extracted_text
+    if is_image_filename(filename_hint):
+        filename, content, extracted_text, design = await _resolve_image_upload(
+            file,
+            deps.extractor,
+            image_deps.classifier,
+            image_deps.diagram_interpreter,
+            notes,
+        )
+        if design is not None:
+            record = SessionRecord(
+                session_id=str(uuid.uuid4()),
+                owner_oid=owner_oid,
+                owner_name=owner_name,
+                source_text=f"[Uploaded diagram: {filename}]",
+            )
+            _apply_diagram_to_record(record, filename, content, design, image_deps)
+            store.create(record)
+            return RequirementsRunView.from_record(record)
+        source_text = f"{extracted_text}\n\n{notes}" if notes else extracted_text
+    else:
+        extracted_text, content = await _extract_text_from_upload(file, deps.extractor)
+        filename = filename_hint or "upload"
+        source_text = f"{extracted_text}\n\n{notes}" if notes else extracted_text
 
     record = SessionRecord(
         session_id=str(uuid.uuid4()),
@@ -371,6 +595,43 @@ def get_run(
 
 
 @router.post(
+    "/{session_id}/rename",
+    dependencies=[Depends(require_role(*_ANY_ROLE))],
+)
+def rename_run(
+    session_id: str,
+    body: RenameRunRequest,
+    request: Request,
+    store: Annotated[SessionStore, Depends(get_session_store)],
+) -> RequirementsRunView:
+    """Set this session's display name — a label only.
+
+    Open to any of the three functional roles (``Admin`` implicit), not
+    gated to a single role the way ``accept``/``approve`` are: renaming
+    doesn't advance the session's stage or touch its content, it's metadata
+    about a session the caller already owns (or, for ``Admin``, any
+    session — see ``load_owned``/``app/api/ownership.py``), the same "any
+    functional role can act on what they own" shape as the read routes.
+    """
+    record = load_owned(store, session_id, request)
+
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "Name must not be empty."
+        )
+    if len(name) > MAX_NAME_LENGTH:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            f"Name must be {MAX_NAME_LENGTH} characters or fewer.",
+        )
+
+    record.name = name
+    _upsert_guarded(store, record)
+    return RequirementsRunView.from_record(record)
+
+
+@router.post(
     "/{session_id}/refine",
     dependencies=[Depends(require_role(ROLE_USER))],
 )
@@ -422,12 +683,22 @@ async def refine_run_from_upload(
     deps: Annotated[
         RequirementsUploadDependencies, Depends(get_requirements_upload_dependencies)
     ],
+    image_deps: Annotated[
+        ImageUploadDependencies, Depends(get_image_upload_dependencies)
+    ],
     notes: Annotated[str | None, Form()] = None,
 ) -> RequirementsRunView:
-    """Refine requirements from an uploaded document instead of typed text.
+    """Refine requirements from an uploaded document, or jump straight to
+    architecture from an uploaded diagram image, instead of typed text.
 
     Sibling of ``refine_run`` for the same multipart-vs-JSON-body reason as
-    ``start_run_from_upload``.
+    ``start_run_from_upload``. Still only possible while the session is in
+    :data:`STAGE_REQUIREMENTS` (same as a text-based refine) — a diagram
+    classified here moves the session directly to
+    :data:`STAGE_ARCHITECTURE`, the same destination ``accept_run`` reaches
+    from typed/OCR'd requirements, just skipping past the intermediate
+    requirements-refinement step entirely. See
+    ``_apply_diagram_to_record``.
     """
     record = load_owned(store, session_id, request)
 
@@ -438,9 +709,25 @@ async def refine_run_from_upload(
         f"refining is only possible while still in {STAGE_REQUIREMENTS!r}.",
     )
 
-    extracted_text, content = await _extract_text_from_upload(file, deps.extractor)
-    filename = file.filename or "upload"
-    source_text = f"{extracted_text}\n\n{notes}" if notes else extracted_text
+    filename_hint = file.filename or ""
+
+    if is_image_filename(filename_hint):
+        filename, content, extracted_text, design = await _resolve_image_upload(
+            file,
+            deps.extractor,
+            image_deps.classifier,
+            image_deps.diagram_interpreter,
+            notes,
+        )
+        if design is not None:
+            _apply_diagram_to_record(record, filename, content, design, image_deps)
+            _upsert_guarded(store, record)
+            return RequirementsRunView.from_record(record)
+        source_text = f"{extracted_text}\n\n{notes}" if notes else extracted_text
+    else:
+        extracted_text, content = await _extract_text_from_upload(file, deps.extractor)
+        filename = filename_hint or "upload"
+        source_text = f"{extracted_text}\n\n{notes}" if notes else extracted_text
 
     record.requirements_version += 1
     record.source_text = source_text

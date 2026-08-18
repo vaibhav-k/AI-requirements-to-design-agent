@@ -203,6 +203,16 @@ export function useRequirementsApi() {
       getRun: (sessionId: string) =>
         request<RequirementsRunView>(`/requirements-runs/${sessionId}`),
 
+      /** Set a session's display label — `app/api/routes/requirements.py`'s
+       * `rename_run`. Open to any of User/Architect/Reviewer on their own
+       * sessions (Admin on any session); see permissions.ts's
+       * `hasAnyRole`/`ROLE_*` for how the UI grey out mirrors that. */
+      renameRun: (sessionId: string, name: string) =>
+        request<RequirementsRunView>(`/requirements-runs/${sessionId}/rename`, {
+          method: "POST",
+          body: JSON.stringify({ name }),
+        }),
+
       refineRun: (sessionId: string, input: string) =>
         request<RequirementsRunView>(`/requirements-runs/${sessionId}/refine`, {
           method: "POST",

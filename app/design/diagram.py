@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import base64
+import re
 from contextlib import AbstractContextManager
-from typing import Protocol, cast
+from pathlib import Path
+from typing import NamedTuple, Protocol, cast
 
 from graphviz import Digraph
 
-from app.design.models import SystemDesignArtifact
+from app.design.icons import component_icon_path, dependency_icon_path
+from app.design.models import DesignComponent, SystemDesignArtifact
 
 
 class GraphRenderer(Protocol):
@@ -38,8 +42,11 @@ class GraphRenderer(Protocol):
         """Set a graph/node/edge default attribute."""
         ...
 
-    def subgraph(self) -> AbstractContextManager[GraphRenderer]:
-        """Open an anonymous subgraph, e.g. to force a shared rank."""
+    def subgraph(
+        self, name: str | None = None
+    ) -> AbstractContextManager[GraphRenderer]:
+        """Open a subgraph, e.g. to force a shared rank or (when `name`
+        starts with ``"cluster"``) to render a labeled, boxed group."""
         ...
 
     def pipe(self, format: str) -> bytes:
@@ -51,18 +58,72 @@ class DiagramGenerationError(RuntimeError):
     """Raised when diagram generation fails."""
 
 
-class ArchitectureDiagramGenerator:
-    """Generate a high-level architecture diagram as SVG."""
+class _DiagramNode(NamedTuple):
+    """One component or external dependency to place via
+    `ArchitectureDiagramGenerator._lay_out_column`, already resolved to
+    its icon (see `app/design/icons.py`)."""
 
-    # How many node boxes to place per row before wrapping to the next
-    # row — chosen so this many compact "{id}\n{name}" boxes fit across a
-    # portrait Letter page's usable width (~7.5in) without needing
-    # horizontal scrolling. See `_lay_out_rows` for why this has to be a
-    # manual grid rather than just picking a `rankdir`: a plain topological
-    # layout puts one node per rank along the flow direction, so a design
-    # with many components still produces one long row (just rotated to
-    # vertical instead of horizontal) no matter which direction is chosen.
-    NODES_PER_ROW = 3
+    node_id: str
+    name: str
+    tooltip: str
+    icon_path: str
+    # "" for a normal component caption; a color name (e.g.
+    # "darkgoldenrod") to visually set an external dependency's caption
+    # apart from a component's, since both now render as icon nodes with
+    # no background fill to otherwise tell them apart at a glance.
+    caption_color: str = ""
+
+
+# Matches the `xlink:href="...png"` (or `href="...png"` on newer
+# SVG/Graphviz versions) that Graphviz writes for every node's
+# `image=...png` HTML-label attribute — see `_inline_local_images`.
+_LOCAL_IMAGE_HREF_PATTERN = re.compile(r'((?:xlink:href|href))="([^"]+\.png)"')
+
+
+class ArchitectureDiagramGenerator:
+    """Generate a high-level architecture diagram as SVG.
+
+    Components are grouped into one Graphviz *cluster* per
+    ``DesignComponent.domain`` (see ``app/design/models.py``), so
+    related components stay visually together and most real edges stay
+    short instead of arcing across the whole diagram. This replaced an
+    earlier design that forced every component into one flat page-wide
+    grid — see git history / the "Image Input Classification" README
+    section's neighbor for why: on any design with more than a handful
+    of components and interfaces, that flat grid produced a "hairball"
+    of long, crossing edge splines, because every real edge was drawn
+    with ``constraint="false"`` (so it couldn't influence node
+    placement) between nodes whose position was decided purely by the
+    grid, not by which nodes were actually related.
+
+    Every component and external dependency renders as a small icon
+    (see ``app/design/icons.py`` for how an icon is chosen) above its
+    "{id}\\n{name}" caption, in the style of a typical cloud
+    architecture reference diagram, rather than a plain colored box.
+    """
+
+    # Past this many total real edges (interfaces + dependency "used by"
+    # edges combined), rendering every single one's name as inline label
+    # text turns into unreadable clutter — dozens of small text strings
+    # scattered across the diagram. Full detail is still available via
+    # each edge's `tooltip` (shown on hover, and already relied on by
+    # the frontend's DiagramViewer), so above this threshold inline
+    # labels are dropped entirely rather than made illegibly small.
+    MAX_LABELED_EDGES = 24
+
+    # Domain shown for a component whose `domain` field is blank —
+    # keeps older/unclassified designs (and anything that constructs a
+    # `DesignComponent` without a domain) rendering as a single grouped
+    # cluster instead of erroring or silently omitting the field.
+    DEFAULT_DOMAIN = "Other Components"
+
+    # Side length, in points, of a node's icon image within its
+    # HTML-like label — see `_node_label`.
+    ICON_SIZE_PX = 56
+
+    # Caption color for an external dependency node, set apart from a
+    # component's default (unset -> black) caption color.
+    DEPENDENCY_CAPTION_COLOR = "darkgoldenrod"
 
     def _create_graph(self) -> GraphRenderer:
         graph = Digraph(
@@ -70,37 +131,49 @@ class ArchitectureDiagramGenerator:
             format="svg",
         )
 
-        # Sized to a US Letter page in portrait (8.5 x 11in) with a small
-        # margin reserved outside the `size` box for print bleed.
-        # `rankdir="TB"` reads top-to-bottom within the manual row grid
-        # `_lay_out_rows` builds — the grid, not this attribute alone, is
-        # what keeps the diagram on one page; see its docstring.
+        # No fixed page size or `ratio="compress"` here: forcing a
+        # multi-domain, many-edge diagram into one Letter page squeezes
+        # an already-complex layout into a small bounding box, which
+        # stretches and bends edges into long arcs. The frontend's
+        # DiagramViewer already supports zoom/pan, so letting Graphviz
+        # size the SVG naturally — as large as the actual content needs
+        # — produces straighter, more readable edges at the cost of not
+        # fitting on one printed page unscaled.
+        #
+        # `rankdir="LR"` (left-to-right) rather than top-to-bottom,
+        # matching the flow direction of a typical reference cloud
+        # architecture diagram (client -> gateway -> services -> data
+        # stores). `nodesep`/`ranksep` are larger than plain-box-node
+        # defaults would need, to leave room for each edge's `xlabel`
+        # (see `_add_interfaces`) to sit clear of the icon-and-caption
+        # nodes on either side of it.
         graph.attr(
-            rankdir="TB",
+            rankdir="LR",
             bgcolor="white",
-            size="7.5,10",
-            ratio="compress",
             pad="0.25",
-            nodesep="0.35",
-            ranksep="0.4",
+            nodesep="0.5",
+            ranksep="0.9",
+            # Right-angle, straight-segment edge routing instead of
+            # Graphviz's default curved splines — reads as far less
+            # "haphazard" for a boxes-and-arrows architecture diagram,
+            # and was stress-tested at the same scales as the clustering
+            # change above (up to 200 components / 300 interfaces)
+            # without reproducing the `dot` crash discussed on
+            # `_lay_out_column`. Edge label text moves to `xlabel`
+            # instead of `label` to match — `dot` warns that plain
+            # `label` isn't positioned correctly on orthogonal edges.
+            splines="ortho",
         )
 
-        # Compact node style: small font, tight margins, and no fixed
-        # minimum box size (Graphviz's own defaults reserve 0.75in x 0.5in
-        # per node even for short labels) — labels are just "{id}\n{name}"
-        # (see _add_components), so the box only needs to be as wide as
-        # that, not as wide as a full responsibility sentence.
+        # `shape="none"` — every node supplies its own HTML-like label
+        # (see `_node_label`), which lays out the icon and caption
+        # itself; a `box`/`filled` default here would just draw an
+        # unused outline behind it.
         graph.attr(
             "node",
-            shape="box",
-            style="rounded,filled",
-            fillcolor="lightblue",
-            color="steelblue",
+            shape="none",
             fontname="Helvetica",
             fontsize="11",
-            margin="0.12,0.08",
-            width="0",
-            height="0",
         )
 
         graph.attr(
@@ -122,14 +195,22 @@ class ArchitectureDiagramGenerator:
         graph = self._create_graph()
 
         try:
-            anchor = self._add_components(graph, design)
-            self._add_external_dependencies(graph, design, anchor)
-            self._add_interfaces(graph, design)
-            self._add_dependency_edges(graph, design)
+            domain_of = self._add_components(graph, design)
+            self._add_external_dependencies(graph, design)
+
+            total_edges = len(design.interfaces) + sum(
+                len(dependency.used_by_components)
+                for dependency in design.external_dependencies
+            )
+            suppress_labels = total_edges > self.MAX_LABELED_EDGES
+
+            self._add_interfaces(graph, design, domain_of, suppress_labels)
+            self._add_dependency_edges(graph, design, suppress_labels)
 
             svg_bytes = graph.pipe(format="svg")
+            svg = svg_bytes.decode("utf-8")
 
-            return svg_bytes.decode("utf-8")
+            return self._inline_local_images(svg)
 
         except Exception as exc:
             raise DiagramGenerationError(
@@ -137,157 +218,297 @@ class ArchitectureDiagramGenerator:
             ) from exc
 
     @staticmethod
-    def _lay_out_rows(
-        graph: GraphRenderer,
-        items: list[tuple[str, str, str]],
-        node_attrs: dict[str, str],
-        previous_anchor: str | None,
-    ) -> str | None:
-        """Place `items` (id, label, tooltip) into rows of `NODES_PER_ROW`.
+    def _inline_local_images(svg: str) -> str:
+        """Replace every local-filesystem PNG `href`/`xlink:href` that
+        Graphviz wrote for a node's icon with an inline base64 `data:`
+        URI.
 
-        Each row is pinned to a single Graphviz rank (`rank=same`), so it
-        renders as one horizontal band, regardless of what the real
-        interface/dependency edges added elsewhere would otherwise imply
-        about layout. The rows are then chained top-to-bottom with
-        invisible, non-labeled edges — one per row transition, which is
-        enough to force the whole shared rank below it, since every node
-        in a row already shares that one rank.
-
-        This is what actually keeps the diagram to a fixed page width no
-        matter how many components/dependencies exist: a plain topological
-        layout assigns one rank per node along a dependency chain, so a
-        20-component design produces 20 ranks in a single row/column
-        either way — wide if `rankdir="LR"`, tall if `"TB"`, but always
-        one node deep. Wrapping into a grid trades that unbounded single
-        dimension for a fixed width and a height that grows with the
-        component count instead.
-
-        Returns the id of the last row's anchor node (for the next call to
-        chain from), or `previous_anchor` unchanged if `items` is empty.
+        Graphviz's SVG output references an icon by the exact filesystem
+        path passed to its `IMG SRC=...` HTML-label attribute — fine for
+        a `dot`-produced file sitting next to that path, but this SVG is
+        persisted as a Blob artifact and later rendered directly in a
+        browser (`DiagramViewer.tsx`), which has no access to this
+        server's filesystem. Inlining the icon bytes keeps the SVG fully
+        self-contained wherever it ends up, exactly like a component's
+        `image=` icon reference is meant to look regardless of where the
+        SVG is opened.
         """
 
-        anchor = previous_anchor
-        per_row = ArchitectureDiagramGenerator.NODES_PER_ROW
+        def _inline(match: re.Match[str]) -> str:
+            attribute, path = match.group(1), match.group(2)
+            encoded = base64.b64encode(Path(path).read_bytes()).decode("ascii")
+            return f'{attribute}="data:image/png;base64,{encoded}"'
 
-        for row_start in range(0, len(items), per_row):
-            row = items[row_start : row_start + per_row]
+        return _LOCAL_IMAGE_HREF_PATTERN.sub(_inline, svg)
 
-            with graph.subgraph() as row_graph:
-                row_graph.attr(rank="same")
+    @staticmethod
+    def _escape_html(text: str) -> str:
+        """Escape the handful of characters that are structurally
+        significant inside a Graphviz HTML-like label — see
+        `_node_label`. Component/dependency names and ids are free text
+        (LLM- or user-supplied), so an unescaped `<`, `>`, or `&` would
+        otherwise corrupt the label's HTML structure."""
 
-                for node_id, label, tooltip in row:
-                    row_graph.node(node_id, label=label, tooltip=tooltip, **node_attrs)
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-                # Pin left-to-right order within the row to match `items`'
-                # order — without this, Graphviz's crossing-minimization is
-                # free to reorder same-rank nodes however reduces edge
-                # crossings, which reads as scrambled (row IDs out of
-                # sequence) once real interface/dependency edges are added.
-                row_pairs = zip(row, row[1:], strict=False)
-                for (left_id, _, _), (right_id, _, _) in row_pairs:
-                    row_graph.edge(left_id, right_id, label="", style="invis")
+    @staticmethod
+    def _node_label(node: _DiagramNode) -> str:
+        """Build the HTML-like label Graphviz needs to place `node`'s
+        icon above its "{id}\\n{name}" caption without the two
+        overlapping.
 
-            row_anchor = row[0][0]
+        A plain `image=...` + `label=...` pair on a `shape="none"` node
+        does NOT reserve separate space for the label under the
+        installed Graphviz build (2.43.0): the label text renders
+        overlapping the image's own area instead of below it, regardless
+        of `labelloc`. An HTML-like label with the image and caption in
+        stacked table rows lays out exactly as expected — confirmed
+        visually against the alternative before choosing this approach.
+        """
 
-            if anchor is not None:
-                # Layout-only — forces `anchor`'s whole rank above this
-                # row's rank. Not a real relationship, so it's invisible
-                # and weighted heavily to avoid stretching the rows apart.
+        size = ArchitectureDiagramGenerator.ICON_SIZE_PX
+        node_id = ArchitectureDiagramGenerator._escape_html(node.node_id)
+        name = ArchitectureDiagramGenerator._escape_html(node.name)
+
+        caption = f"{node_id}<BR/>{name}"
+        if node.caption_color:
+            caption = f'<FONT COLOR="{node.caption_color}">{caption}</FONT>'
+
+        return (
+            '<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="2">'
+            f'<TR><TD FIXEDSIZE="TRUE" WIDTH="{size}" HEIGHT="{size}">'
+            f'<IMG SRC="{node.icon_path}" SCALE="TRUE"/></TD></TR>'
+            f"<TR><TD>{caption}</TD></TR>"
+            "</TABLE>>"
+        )
+
+    @staticmethod
+    def _lay_out_column(
+        graph: GraphRenderer,
+        nodes: list[_DiagramNode],
+    ) -> None:
+        """Place `nodes` into `graph` (a cluster subgraph) as a single
+        top-to-bottom column, in `nodes`' order.
+
+        Consecutive nodes are chained with an invisible, unlabeled,
+        heavily-weighted edge — a normal *directed* edge, contributing a
+        real (if fake) rank-ordering constraint, NOT a `rank=same`
+        ("flat"/same-rank) edge. That distinction matters a lot here: an
+        earlier version of this method instead wrapped items into a grid
+        using nested `rank=same` subgraphs (to bound a domain's width
+        instead of letting it grow as one tall column), one per row,
+        inside the domain's `cluster_*`-named subgraph. That combination —
+        `rank=same` nested inside a Graphviz cluster, on a graph with
+        enough real edges crossing between clusters — reliably crashes the
+        installed Graphviz `dot` build (2.43.0) with
+        `class2.c:148: merge_chain: Assertion 'ED_to_virt(e) == NULL'
+        failed`, confirmed via local reproduction at roughly 40+
+        components / 60+ interfaces spread across several domains — well
+        within what a real generated architecture can reach. Directed
+        (non-flat) invisible edges inside a cluster, at the same or
+        greater scale, do not trigger it — including with `rankdir="LR"`
+        (this now lays out left-to-right, not top-to-bottom; re-verified
+        against the same stress scale after that change).
+
+        The column layout this settles on isn't just the safe fallback,
+        though — it's also a closer match to how domains are drawn in a
+        typical reference architecture diagram (a labeled section
+        containing a stack of its components) than the wrapped grid was,
+        so nothing about the visual result is a downgrade for it.
+        """
+
+        previous_id: str | None = None
+
+        for node in nodes:
+            graph.node(
+                node.node_id,
+                label=ArchitectureDiagramGenerator._node_label(node),
+                tooltip=node.tooltip,
+            )
+
+            if previous_id is not None:
                 graph.edge(
-                    anchor,
-                    row_anchor,
-                    label="",
-                    style="invis",
-                    weight="4",
+                    previous_id, node.node_id, label="", style="invis", weight="4"
                 )
 
-            anchor = row_anchor
+            previous_id = node.node_id
 
-        return anchor
+    @staticmethod
+    def _domain_of(component: DesignComponent) -> str:
+        return component.domain.strip() or ArchitectureDiagramGenerator.DEFAULT_DOMAIN
+
+    @staticmethod
+    def _group_by_domain(
+        components: list[DesignComponent],
+    ) -> dict[str, list[DesignComponent]]:
+        """Bucket `components` by domain, preserving each domain's first
+        appearance order (Python dicts preserve insertion order) — so
+        clusters render in roughly the order the design introduced them,
+        rather than an arbitrary or alphabetical order."""
+
+        grouped: dict[str, list[DesignComponent]] = {}
+
+        for component in components:
+            grouped.setdefault(
+                ArchitectureDiagramGenerator._domain_of(component), []
+            ).append(component)
+
+        return grouped
 
     @staticmethod
     def _add_components(
         graph: GraphRenderer,
         design: SystemDesignArtifact,
-    ) -> str | None:
-        # Box text is deliberately just "{id}\n{name}" (e.g.
+    ) -> dict[str, str]:
+        # Caption text is deliberately just "{id}\n{name}" (e.g.
         # "C-001\nUser Interaction Component") — the full responsibility
-        # stays out of the box (it's already in the Requirements/
-        # Architecture text panel in the UI) and is attached as a
-        # `tooltip`, which Graphviz renders as an `xlink:title` on the
-        # node's link element, shown on hover, without touching the
-        # node's own `<title>` (still just the component id — the
-        # frontend's click-to-inspect in DiagramViewer.tsx depends on
-        # that staying exactly the id).
-        items = [
-            (
-                component.id,
-                f"{component.id}\n{component.name}",
-                component.responsibility,
-            )
-            for component in design.components
-        ]
+        # stays out of it (it's already in the Requirements/Architecture
+        # text panel in the UI) and is attached as a `tooltip`, which
+        # Graphviz renders as an `xlink:title` on the node's link
+        # element, shown on hover, without touching the node's own
+        # `<title>` (still just the component id — the frontend's
+        # click-to-inspect in DiagramViewer.tsx depends on that staying
+        # exactly the id).
+        #
+        # Returns component id -> domain, so `_add_interfaces` can tell
+        # whether an interface stays within one domain (and can safely
+        # be allowed to influence layout) or crosses domains.
+        domain_of: dict[str, str] = {}
 
-        return ArchitectureDiagramGenerator._lay_out_rows(graph, items, {}, None)
+        grouped = ArchitectureDiagramGenerator._group_by_domain(design.components)
+
+        for index, (domain, components) in enumerate(grouped.items()):
+            nodes = [
+                _DiagramNode(
+                    node_id=component.id,
+                    name=component.name,
+                    tooltip=component.responsibility,
+                    icon_path=component_icon_path(
+                        component.name, component.responsibility
+                    ),
+                )
+                for component in components
+            ]
+
+            for component in components:
+                domain_of[component.id] = domain
+
+            with graph.subgraph(name=f"cluster_domain_{index}") as cluster:
+                cluster.attr(
+                    label=domain,
+                    # Dashed, Azure-blue boundary — the same visual
+                    # convention a typical Azure reference architecture
+                    # diagram uses for a virtual network or other logical
+                    # boundary grouping a set of resources.
+                    style="dashed",
+                    color="#0078D4",
+                    fontname="Helvetica-Bold",
+                    fontsize="12",
+                    bgcolor="white",
+                )
+                ArchitectureDiagramGenerator._lay_out_column(cluster, nodes)
+
+        return domain_of
 
     @staticmethod
     def _add_external_dependencies(
         graph: GraphRenderer,
         design: SystemDesignArtifact,
-        previous_anchor: str | None,
-    ) -> str | None:
-        items = [
-            (dependency.id, f"{dependency.id}\n{dependency.name}", dependency.purpose)
+    ) -> None:
+        if not design.external_dependencies:
+            return
+
+        nodes = [
+            _DiagramNode(
+                node_id=dependency.id,
+                name=dependency.name,
+                tooltip=dependency.purpose,
+                icon_path=dependency_icon_path(dependency.name, dependency.purpose),
+                caption_color=ArchitectureDiagramGenerator.DEPENDENCY_CAPTION_COLOR,
+            )
             for dependency in design.external_dependencies
         ]
 
-        return ArchitectureDiagramGenerator._lay_out_rows(
-            graph,
-            items,
-            {
-                "style": "rounded,dashed,filled",
-                "fillcolor": "lightyellow",
-                "color": "darkgoldenrod",
-            },
-            previous_anchor,
-        )
+        # Dependencies aren't grouped per-domain — a single dependency is
+        # often used by components across several domains (see
+        # `used_by_components`), so it has no one natural "home" domain.
+        # They still get their own cluster, both to visually set them
+        # apart from the components above and to reuse the same column
+        # layout as domain clusters.
+        with graph.subgraph(name="cluster_external_dependencies") as cluster:
+            cluster.attr(
+                label="External Dependencies",
+                style="dashed",
+                color="darkgoldenrod",
+                fontname="Helvetica-Bold",
+                fontsize="12",
+                bgcolor="white",
+            )
+            ArchitectureDiagramGenerator._lay_out_column(cluster, nodes)
 
     @staticmethod
     def _add_interfaces(
         graph: GraphRenderer,
         design: SystemDesignArtifact,
+        domain_of: dict[str, str],
+        suppress_labels: bool,
     ) -> None:
         for interface in design.interfaces:
+            same_domain = domain_of.get(interface.source_component) == domain_of.get(
+                interface.target_component
+            )
+
             graph.edge(
                 interface.source_component,
                 interface.target_component,
-                label=interface.name,
+                label="",
+                # `xlabel`, not `label` — see `_create_graph`'s
+                # `splines="ortho"` comment for why.
+                xlabel="" if suppress_labels else interface.name,
                 tooltip=interface.purpose,
-                # Interfaces describe a relationship, not a layout
-                # requirement — the row grid built by `_lay_out_rows`
-                # already decides rank order. Without this, an interface
-                # that happens to point "backward" relative to row order
-                # would fight that grid instead of just being drawn as a
-                # (possibly upward-pointing) arrow across it.
-                constraint="false",
+                # An interface within a single domain cluster is allowed
+                # to influence layout (helping Graphviz order/route it
+                # sensibly among that domain's own nodes). One that
+                # crosses domains keeps `constraint="false"`, the same as
+                # before: letting a cross-domain edge pull on rank
+                # assignment would fight the clusters themselves, likely
+                # dragging nodes toward a neighboring domain's rank
+                # instead of just being drawn as a (possibly long) arrow
+                # between two independently-laid-out groups.
+                constraint="true" if same_domain else "false",
             )
 
     @staticmethod
     def _add_dependency_edges(
         graph: GraphRenderer,
         design: SystemDesignArtifact,
+        suppress_labels: bool,
     ) -> None:
         for dependency in design.external_dependencies:
-            for component_id in dependency.used_by_components:
-                # Dashed and dependency-colored so a used-by edge reads as
-                # visually distinct from an interface edge at a glance,
-                # rather than only being distinguishable by reading labels.
+            for position, component_id in enumerate(dependency.used_by_components):
+                # Only the first edge into a given dependency shows its
+                # name as an inline label; a dependency used by several
+                # components would otherwise repeat the exact same label
+                # text on every incoming edge, cluttering the area around
+                # that dependency's node for no added information. Every
+                # edge still carries the full `tooltip` regardless.
+                show_label = not suppress_labels and position == 0
+
                 graph.edge(
                     component_id,
                     dependency.id,
-                    label=dependency.name,
+                    label="",
+                    # `xlabel`, not `label` — see `_create_graph`'s
+                    # `splines="ortho"` comment for why.
+                    xlabel=dependency.name if show_label else "",
                     tooltip=dependency.purpose,
                     style="dashed",
                     color="darkgoldenrod",
+                    # Dependencies aren't clustered per-domain (see
+                    # `_add_external_dependencies`), so letting these
+                    # edges influence rank assignment would pull a
+                    # dependency's rank toward whichever component
+                    # happened to be laid out last among potentially
+                    # several unrelated domains — kept `False`, as before.
                     constraint="false",
                 )

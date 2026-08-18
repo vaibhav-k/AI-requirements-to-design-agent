@@ -10,6 +10,16 @@ class DesignComponent(BaseModel):
     name: str = Field(min_length=1)
     responsibility: str = Field(min_length=1)
 
+    # A short group/category name (e.g. "Client & Identity", "Data
+    # Platform") shared by every component that logically belongs
+    # together. Optional and blank by default so existing designs (and
+    # any code constructing a `DesignComponent` without it) keep working
+    # unchanged; `ArchitectureDiagramGenerator` treats a blank domain as
+    # its own single "Other Components" group rather than requiring one.
+    # See `app/design/diagram.py` for how this drives per-domain
+    # clustering in the rendered diagram.
+    domain: str = Field(default="")
+
     requirement_ids: list[str] = Field(default_factory=list)
 
 

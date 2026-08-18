@@ -19,7 +19,7 @@
   flex: 1;
   min-height: 0;
   display: flex;
-  gap: 24px;
+  gap: 8px;
   padding-bottom: 24px;
 }
 
@@ -30,6 +30,33 @@
 .app-header h1 {
   font-size: 20px;
   margin: 0;
+}
+
+.role-badge {
+  display: inline-block;
+  font-size: 0.8em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-border);
+  color: var(--accent);
+  background: var(--accent-bg);
+  vertical-align: middle;
+}
+
+/* Shows a component's `domain` (app/design/models.py) next to its name in
+   the Architecture text panel — the same grouping used to cluster
+   components in the rendered diagram (app/design/diagram.py), surfaced
+   here too so the two views stay legible against each other. */
+.domain-badge {
+  display: inline-block;
+  font-size: 0.75em;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text);
+  background: var(--code-bg);
+  vertical-align: middle;
 }
 
 .panel-header {
@@ -53,6 +80,12 @@
   display: flex;
   gap: 12px;
   margin-top: 12px;
+  /* `.gate`'s `text-align: center` (its only current use) has no effect on
+   * a flex container's children — flex items follow `justify-content`, not
+   * `text-align`, and that defaults to `flex-start` (left-aligned). Without
+   * this, Sign in/Continue without signing in sit flush left instead of
+   * centered under the centered heading/paragraph above them. */
+  justify-content: center;
 }
 
 .muted {
@@ -114,15 +147,48 @@ textarea {
 
 /* --- Sidebar --- */
 
-.sidebar {
+.sidebar-wrapper {
   flex: none;
-  width: 220px;
+  display: flex;
+  min-height: 0;
+}
+
+.sidebar {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
   display: flex;
   flex-direction: column;
   gap: 12px;
   padding-right: 16px;
-  border-right: 1px solid var(--border);
   overflow-y: auto;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sidebar-header .new-session-button {
+  flex: 1;
+}
+
+.sidebar-collapse-toggle {
+  flex: none;
+  padding: 6px 10px;
+  color: var(--text);
+}
+
+/* The collapsed rail: just wide enough for the expand toggle, so the
+ * pane can be tucked away without losing the ability to bring it back —
+ * hiding it entirely (rendering nothing) would leave no way to reopen it. */
+.sidebar.sidebar-collapsed {
+  flex: none;
+  width: 32px;
+  padding-right: 0;
+  align-items: center;
+  padding-top: 2px;
 }
 
 .new-session-button {
@@ -141,14 +207,13 @@ textarea {
 .session-item {
   width: 100%;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  align-items: center;
+  gap: 4px;
   background: none;
   border: 1px solid transparent;
   color: inherit;
   border-radius: 6px;
-  padding: 8px 10px;
+  padding: 4px 4px 4px 10px;
   text-align: left;
 }
 
@@ -162,9 +227,75 @@ textarea {
   background: var(--accent-bg);
 }
 
-.session-item code {
+.session-item-select {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   background: none;
-  padding: 0;
+  border: none;
+  color: inherit;
+  padding: 4px 6px;
+  text-align: left;
+}
+
+.session-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.session-rename-button {
+  flex: none;
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text);
+  opacity: 0.6;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.session-item:hover .session-rename-button {
+  opacity: 1;
+}
+
+.session-item.session-item-editing {
+  flex-direction: column;
+  align-items: stretch;
+  padding: 6px 10px;
+}
+
+.session-rename-input {
+  font: inherit;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--accent-border);
+  background: var(--bg);
+  color: inherit;
+  width: 100%;
+}
+
+.session-rename-error {
+  color: var(--error);
+  font-size: 0.8em;
+}
+
+/* --- Resize handles --- */
+
+.resize-handle {
+  flex: none;
+  width: 6px;
+  cursor: col-resize;
+  border-radius: 3px;
+  background: transparent;
+}
+
+.resize-handle:hover,
+.resize-handle:active {
+  background: var(--accent-border);
 }
 
 /* --- Workspace layout --- */
@@ -173,12 +304,12 @@ textarea {
   flex: 1;
   min-width: 0;
   display: flex;
-  gap: 24px;
+  gap: 8px;
   min-height: 0;
 }
 
 .workspace-conversation {
-  flex: 0 0 380px;
+  flex: 0 0 auto;
   min-height: 0;
   display: flex;
 }

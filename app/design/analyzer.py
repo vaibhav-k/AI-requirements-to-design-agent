@@ -120,7 +120,12 @@ interfaces, and external dependencies that are still valid. Apply the
 requested change. Do not silently remove or rename existing components,
 interfaces, or dependencies unless the requested change explicitly calls
 for it — prefer adding or adjusting over wholesale regeneration, so
-existing IDs remain stable across a refinement wherever possible.
+existing IDs remain stable across a refinement wherever possible. Also
+preserve each existing component's "domain" string exactly as-is unless
+the requested change specifically moves it to a different group; give
+any newly added component a domain consistent with the existing set
+(reuse an existing domain string where it fits, rather than inventing a
+near-duplicate).
 """
 
         return f"""
@@ -137,6 +142,14 @@ DO:
 - Identify major logical system components.
 - Give every component a unique ID.
 - Describe each component's responsibility.
+- Assign every component a short "domain" — a group/category name (e.g.
+  "Client & Identity", "Data Platform", "Integration", "Finance
+  Services") shared by every component that belongs together logically.
+  Use the SAME domain string, character-for-character, for every
+  component in that group, and keep the number of distinct domains
+  small (roughly 3-8 for a typical design) — this is what lets the
+  rendered diagram visually cluster related components together instead
+  of scattering them.
 - Map each component to the requirement IDs that justify it.
 - Identify important interactions BETWEEN COMPONENTS ONLY.
 - Give every interface a unique ID.

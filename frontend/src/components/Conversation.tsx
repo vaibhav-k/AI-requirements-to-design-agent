@@ -221,8 +221,8 @@ export function Conversation({
                   !uploadAllowed
                     ? uploadDisabledReason
                     : hasRequirements
-                      ? `Scan another file (${SUPPORTED_UPLOAD_EXTENSIONS.join(", ")}) — its content is merged into the current requirements, same as typing a refinement`
-                      : `Scan a file (${SUPPORTED_UPLOAD_EXTENSIONS.join(", ")}) instead of typing your requirements`
+                      ? `Scan another file (${SUPPORTED_UPLOAD_EXTENSIONS.join(", ")}) — its content is merged into the current requirements, same as typing a refinement. An image is auto-detected as a document screenshot (merged as text) or a system design diagram (redrawn as an architecture directly)`
+                      : `Scan a file (${SUPPORTED_UPLOAD_EXTENSIONS.join(", ")}) instead of typing your requirements. An image is auto-detected as a document screenshot (processed as text) or a system design diagram (redrawn as an architecture directly)`
                 }
               >
                 {hasRequirements ? "Scan another file" : "Scan a file"}

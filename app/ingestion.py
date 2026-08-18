@@ -52,6 +52,12 @@ _DOCUMENT_INTELLIGENCE_EXTENSIONS = frozenset(
     {".pdf", ".docx", ".png", ".jpg", ".jpeg"}
 )
 
+# The subset of the above that could plausibly be a photo/screenshot of a
+# system design or workflow diagram rather than prose — PDF/DOCX are
+# authored documents and never routed through image classification (see
+# ``app/vision.py``'s ``ImageInputClassifier``), only PNG/JPG/JPEG are.
+IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg"})
+
 SUPPORTED_EXTENSIONS = _PLAIN_TEXT_EXTENSIONS | _DOCUMENT_INTELLIGENCE_EXTENSIONS
 
 
@@ -64,6 +70,16 @@ def is_supported_filename(filename: str) -> bool:
     """Whether ``filename``'s extension can be scanned for requirements."""
 
     return _extension_of(filename) in SUPPORTED_EXTENSIONS
+
+
+def is_image_filename(filename: str) -> bool:
+    """Whether ``filename`` is one of the image extensions eligible for
+    image-input classification (``app/vision.py``) before extraction —
+    a PNG/JPG/JPEG might be a document screenshot (routed through the
+    existing OCR pipeline below) or a system design/workflow diagram
+    (routed straight into architecture generation instead)."""
+
+    return _extension_of(filename) in IMAGE_EXTENSIONS
 
 
 class RequirementsDocumentExtractor:

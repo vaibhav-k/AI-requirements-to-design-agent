@@ -4,6 +4,7 @@ import { ApiError, useRequirementsApi } from "../api"
 import { hasAnyRole, ROLE_ARCHITECT, ROLE_REVIEWER, ROLE_USER } from "../permissions"
 import type { RequirementsArtifact, RequirementsRunView, SystemDesignArtifact } from "../types"
 import { useCurrentUser } from "../useCurrentUser"
+import { useResizableWidth } from "../useResizableWidth"
 import { ArtifactPanel, type ArtifactTab } from "./ArtifactPanel"
 import { Conversation, type ConversationStatus, type TranscriptEntry } from "./Conversation"
 
@@ -403,9 +404,19 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
   const sendAllowed =
     run && run.stage === "architecture" ? canManageArchitecture : canCreateRequirements
 
+  // Draggable split between the conversation and the artifact panel — see
+  // useResizableWidth's docstring; persisted separately from the sidebar's
+  // own width under its own localStorage key.
+  const { width: conversationWidth, startDrag: startConversationDrag } = useResizableWidth({
+    defaultWidth: 380,
+    min: 280,
+    max: 720,
+    storageKey: "workspace-conversation-width",
+  })
+
   return (
     <div className="workspace">
-      <div className="workspace-conversation">
+      <div className="workspace-conversation" style={{ flexBasis: conversationWidth }}>
         <Conversation
           transcript={transcript}
           status={status}
@@ -442,6 +453,14 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
           }
         />
       </div>
+
+      <div
+        className="resize-handle"
+        onMouseDown={startConversationDrag}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize conversation panel"
+      />
 
       <div className="workspace-artifacts">
         {sessionId ? (

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -65,7 +66,16 @@ def fakes() -> dict[str, MagicMock]:
 
 
 @pytest.fixture
-def client(fakes: dict[str, MagicMock]) -> TestClient:
+def client(fakes: dict[str, MagicMock]) -> Iterator[TestClient]:
+    """A ``TestClient`` with ``AUTH_ENABLED=false`` — every ``require_role``/
+    ``require_user``/ownership check is a no-op. See
+    ``test_requirements_routes.py``'s identical fixture for why all three
+    ``get_settings`` bindings (``app.web.main``, ``app.security.auth``,
+    ``app.api.ownership``) need patching, not just the one used at app
+    construction — a single patch there only "worked" by coincidence
+    whenever the real, unpatched environment also defaulted to
+    ``AUTH_ENABLED=false``.
+    """
     settings = Settings(auth_enabled=False)
     with patch("app.web.main.get_settings", return_value=settings):
         app = create_app()
@@ -79,7 +89,15 @@ def client(fakes: dict[str, MagicMock]) -> TestClient:
     app.dependency_overrides[get_diagram_generator] = lambda: fakes["diagram_generator"]
     app.dependency_overrides[get_validator] = lambda: fakes["validator"]
 
-    return TestClient(app)
+    auth_patcher = patch("app.security.auth.get_settings", return_value=settings)
+    ownership_patcher = patch("app.api.ownership.get_settings", return_value=settings)
+    auth_patcher.start()
+    ownership_patcher.start()
+    try:
+        yield TestClient(app)
+    finally:
+        auth_patcher.stop()
+        ownership_patcher.stop()
 
 
 def own_session(fakes: dict[str, MagicMock]) -> None:
@@ -129,8 +147,10 @@ def test_get_requirements_version_returns_the_unwrapped_artifact(
     client: TestClient, fakes: dict[str, MagicMock]
 ) -> None:
     own_session(fakes)
-    fakes["artifact_store"].get_requirements_json.return_value = (
-        make_stored_artifact_json(summary="v1 summary")
+    fakes[
+        "artifact_store"
+    ].get_requirements_json.return_value = make_stored_artifact_json(
+        summary="v1 summary"
     )
 
     response = client.get("/requirements-runs/abc-123/requirements/1")
@@ -184,9 +204,9 @@ def test_get_architecture_version_returns_the_design(
     client: TestClient, fakes: dict[str, MagicMock]
 ) -> None:
     own_session(fakes)
-    fakes["artifact_store"].get_design_json.return_value = (
-        '{"architecture_summary": "A design."}'
-    )
+    fakes[
+        "artifact_store"
+    ].get_design_json.return_value = '{"architecture_summary": "A design."}'
 
     response = client.get("/requirements-runs/abc-123/architecture/1")
 

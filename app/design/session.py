@@ -90,14 +90,16 @@ class ArchitectureSession:
         previous_design: SystemDesignArtifact | None = None,
         refinement_input: str | None = None,
     ) -> DesignSessionResult:
-        """Generate, validate, render, and persist an architecture.
+        """Generate, validate, render, and persist an architecture from
+        requirements text.
 
         Passing ``previous_design``/``refinement_input`` refines that design
         in place instead of generating a fresh one — see
-        ``SystemDesignAnalyzer.analyze``.
+        ``SystemDesignAnalyzer.analyze``. The validate/render/persist tail
+        of this is shared with :meth:`generate_from_design` (see there for
+        the image-diagram entry point that skips straight past this
+        text-based analysis step).
         """
-
-        next_version = self.version + 1
 
         try:
             design: SystemDesignArtifact = self.analyzer.analyze(
@@ -105,7 +107,29 @@ class ArchitectureSession:
                 previous_design=previous_design,
                 refinement_input=refinement_input,
             )
+        except Exception as exc:
+            raise DesignGenerationWorkflowError(
+                f"Architecture generation failed: {exc}"
+            ) from exc
 
+        return self.generate_from_design(design)
+
+    def generate_from_design(self, design: SystemDesignArtifact) -> DesignSessionResult:
+        """Validate, render, and persist an already-produced design.
+
+        This is :meth:`generate`'s tail end, factored out so a design that
+        didn't come from :attr:`analyzer` — today, one interpreted directly
+        from an uploaded diagram image by
+        ``app/vision.py``'s ``DiagramImageInterpreter`` (see the upload
+        routes in ``app/api/routes/requirements.py``) — goes through the
+        exact same validation, diagram rendering, and Blob persistence as a
+        text-derived one, rather than a parallel, easily-divergent copy of
+        that logic.
+        """
+
+        next_version = self.version + 1
+
+        try:
             validated_design: SystemDesignArtifact = self.validator.validate(design)
 
             svg = self.diagram_generator.generate(validated_design)

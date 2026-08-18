@@ -46,6 +46,11 @@ export interface DesignComponent {
   id: string
   name: string
   responsibility: string
+  /** Short group/category name (e.g. "Client & Identity") shared by every
+   * component that belongs together — blank for older/unclassified
+   * designs. Drives per-domain clustering in the rendered diagram; see
+   * app/design/diagram.py. */
+  domain: string
   requirement_ids: string[]
 }
 
@@ -120,6 +125,15 @@ export interface MeResponse {
 
 export interface RequirementsRunView {
   session_id: string
+  /** User-editable display label, set via `POST .../rename` — `null` until
+   * someone renames the session (see Sidebar.tsx, which falls back to a
+   * shortened `session_id` while this is unset). */
+  name: string | null
+  /** Who started this session — only ever populated (and only ever shown
+   * by the UI) when the caller is browsing sessions they don't own, i.e.
+   * an Admin viewing `GET /requirements-runs`'s cross-user list; see
+   * `app/api/routes/requirements.py`'s `RequirementsRunView`. */
+  owner_name: string | null
   stage: SessionStage
   requirements_version: number
   requirements: RequirementsArtifact | null

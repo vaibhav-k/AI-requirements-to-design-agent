@@ -69,7 +69,9 @@ export function ArchitectureView({
           emptyLabel="None."
           renderItem={(c) => (
             <>
-              <code>{c.id}</code> <strong>{c.name}</strong> — {c.responsibility}
+              <code>{c.id}</code> <strong>{c.name}</strong>
+              {c.domain && <span className="domain-badge">{c.domain}</span>} —{" "}
+              {c.responsibility}
             </>
           )}
         />
@@ -80,7 +82,9 @@ export function ArchitectureView({
               key={c.id}
               className={c.id === highlightedComponentId ? "highlighted" : undefined}
             >
-              <code>{c.id}</code> <strong>{c.name}</strong> — {c.responsibility}
+              <code>{c.id}</code> <strong>{c.name}</strong>
+              {c.domain && <span className="domain-badge">{c.domain}</span>} —{" "}
+              {c.responsibility}
             </li>
           ))}
         </ul>
