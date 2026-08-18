@@ -13,16 +13,8 @@ Navigate to http://127.0.0.1:8000/docs to get the Swagger UI for the API endpoin
 
 from __future__ import annotations
 
-from app.analyzer import RequirementsAnalyzer
-from app.design.analyzer import (
-    DesignGenerationError,
-    SystemDesignAnalyzer,
-)
-from app.design.diagram import (
-    ArchitectureDiagramGenerator,
-    DiagramGenerationError,
-)
-from app.design.models import SystemDesignArtifact
+from app.application.errors import DesignGenerationError, DiagramGenerationError
+from app.design.diagram import ArchitectureDiagramGenerator
 from app.design.session import (
     ArchitectureSession,
     DesignGenerationWorkflowError,
@@ -31,13 +23,18 @@ from app.design.validator import (
     ArchitectureValidationError,
     ArchitectureValidator,
 )
-from app.models import RequirementsArtifact, StoredArtifact
-from app.session import DesignSession
-from app.storage import (
+from app.domain.design import SystemDesignArtifact
+from app.domain.requirements import RequirementsArtifact, StoredArtifact
+from app.infrastructure.artifact_store import (
     AZURE_CONNECTION_STRING,
     AZURE_CONTAINER,
     ArtifactStore,
 )
+from app.infrastructure.composition import (
+    build_requirements_use_case,
+    build_system_design_use_case,
+)
+from app.session import DesignSession
 
 
 def display_requirements(artifact: RequirementsArtifact) -> None:
@@ -246,7 +243,7 @@ def _accept_and_generate_architecture(
 
     try:
         design_session = ArchitectureSession(
-            analyzer=SystemDesignAnalyzer(),
+            analyzer=build_system_design_use_case(),
             diagram_generator=ArchitectureDiagramGenerator(),
             validator=ArchitectureValidator(),
             store=store,
@@ -288,7 +285,7 @@ def _accept_and_generate_architecture(
 def run() -> None:
     """Run the interactive requirements analyzer."""
 
-    analyzer = RequirementsAnalyzer()
+    analyzer = build_requirements_use_case()
 
     store = ArtifactStore(
         connection_string=AZURE_CONNECTION_STRING,

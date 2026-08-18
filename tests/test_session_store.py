@@ -9,12 +9,10 @@ from azure.cosmos.exceptions import (
     CosmosResourceNotFoundError,
 )
 
+from app.application.errors import SessionConflictError
 from app.config import Settings
-from app.infrastructure.session_store import (
-    CosmosSessionStore,
-    SessionConflictError,
-    SessionRecord,
-)
+from app.domain.session import SessionRecord
+from app.infrastructure.session_store import CosmosSessionStore
 
 
 def make_settings(**overrides: object) -> Settings:
@@ -277,6 +275,29 @@ def test_list_for_owner_queries_cross_partition_and_validates_results(
     store._container.query_items.assert_called_once_with(
         query="SELECT * FROM c WHERE c.owner_oid = @owner ORDER BY c._ts DESC",
         parameters=[{"name": "@owner", "value": "owner-1"}],
+        enable_cross_partition_query=True,
+    )
+
+
+@patch("app.infrastructure.session_store.CosmosClient")
+def test_list_all_queries_every_session_across_owners(
+    mock_cosmos_client: MagicMock,
+) -> None:
+    """Unlike ``list_for_owner``, no ``WHERE`` clause — used only for an
+    Admin-role caller (see ``app/api/ownership.py``'s ``is_admin`` and
+    ``list_runs`` in ``app/api/routes/requirements.py``)."""
+    store = CosmosSessionStore(make_settings())
+    store.start()
+    store._container.query_items.return_value = [
+        {"id": "abc-123", "session_id": "abc-123", "owner_oid": "owner-1"},
+        {"id": "def-456", "session_id": "def-456", "owner_oid": "owner-2"},
+    ]
+
+    records = store.list_all()
+
+    assert [r.session_id for r in records] == ["abc-123", "def-456"]
+    store._container.query_items.assert_called_once_with(
+        query="SELECT * FROM c ORDER BY c._ts DESC",
         enable_cross_partition_query=True,
     )
 

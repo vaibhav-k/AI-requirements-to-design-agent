@@ -1,5 +1,5 @@
 from app.design.diagram import ArchitectureDiagramGenerator
-from app.design.models import (
+from app.domain.design import (
     DesignComponent,
     DesignInterface,
     ExternalDependency,

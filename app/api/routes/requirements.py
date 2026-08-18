@@ -2,7 +2,7 @@
 
 Mirrors the CLI's ``DesignSession``/``ArchitectureSession`` loop
 (``app/main.py``) as stateless HTTP calls backed by
-:class:`~app.infrastructure.session_store.SessionRecord`:
+:class:`~app.domain.session.SessionRecord`:
 
 * ``POST /requirements-runs``          — like the CLI's first ``analyze()`` call.
 * ``POST /requirements-runs/upload``   — same, but from an uploaded document
@@ -54,7 +54,6 @@ from fastapi import (
 )
 from pydantic import BaseModel
 
-from app.analyzer import RequirementsAnalyzer
 from app.api.dependencies import (
     ArchitectureGenerationDependencies,
     ImageUploadDependencies,
@@ -67,13 +66,22 @@ from app.api.dependencies import (
     get_session_store,
 )
 from app.api.ownership import is_admin, load_owned, owner_fields
-from app.design.models import ApprovalDecision, SystemDesignArtifact
-from app.design.session import ArchitectureSession, DesignGenerationWorkflowError
-from app.infrastructure.session_store import (
+from app.application.errors import (
+    DiagramInterpretationError,
+    ImageClassificationError,
     SessionConflictError,
-    SessionRecord,
-    SessionStore,
 )
+from app.application.ports import ArtifactStorePort, SessionStorePort
+from app.application.use_cases.analyze_requirements import AnalyzeRequirementsUseCase
+from app.application.use_cases.classify_image import ClassifyImageUseCase
+from app.application.use_cases.interpret_diagram_image import (
+    InterpretDiagramImageUseCase,
+)
+from app.design.session import ArchitectureSession, DesignGenerationWorkflowError
+from app.domain.design import ApprovalDecision, SystemDesignArtifact
+from app.domain.requirements import RequirementsArtifact, StoredArtifact
+from app.domain.session import SessionRecord
+from app.infrastructure.sync_bridge import run_sync
 from app.ingestion import (
     SUPPORTED_EXTENSIONS,
     DocumentExtractionError,
@@ -81,15 +89,7 @@ from app.ingestion import (
     is_image_filename,
     is_supported_filename,
 )
-from app.models import RequirementsArtifact, StoredArtifact
 from app.security.auth import ROLE_ARCHITECT, ROLE_REVIEWER, ROLE_USER, require_role
-from app.storage import ArtifactStore
-from app.vision import (
-    DiagramImageInterpreter,
-    DiagramInterpretationError,
-    ImageClassificationError,
-    ImageInputClassifier,
-)
 
 # Route paths are relative to this prefix, set once here instead of repeated
 # as a literal on every @router decorator below (SonarQube S1192: string
@@ -181,7 +181,7 @@ class RequirementsRunView(BaseModel):
 
 
 def _persist_requirements_blob(
-    artifact_store: ArtifactStore,
+    artifact_store: ArtifactStorePort,
     record: SessionRecord,
     source_text: str,
     source_filename: str | None = None,
@@ -266,14 +266,15 @@ async def _extract_text_from_upload(
 async def _resolve_image_upload(
     file: UploadFile,
     extractor: RequirementsDocumentExtractor,
-    classifier: ImageInputClassifier,
-    diagram_interpreter: DiagramImageInterpreter,
+    classifier: ClassifyImageUseCase,
+    diagram_interpreter: InterpretDiagramImageUseCase,
     notes: str | None,
 ) -> tuple[str, bytes, str, SystemDesignArtifact | None]:
     """Classify an uploaded image and resolve it into either extracted text
     or a directly-interpreted design — see the module-level docstring's
-    reference to ``app/vision.py`` for why an image needs this extra step
-    that a PDF/DOCX/TXT upload doesn't.
+    reference to ``app.application.use_cases.classify_image``/
+    ``interpret_diagram_image`` for why an image needs this extra step that
+    a PDF/DOCX/TXT upload doesn't.
 
     Returns ``(filename, content, text, design)``, where exactly one of
     ``text``/``design`` is populated depending on the classification: a
@@ -287,15 +288,13 @@ async def _resolve_image_upload(
     filename, content = await _read_upload_content(file)
 
     try:
-        classification = await classifier.classify_async(content, filename)
+        classification = await classifier.execute(content, filename)
     except ImageClassificationError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
 
     if classification.kind == "diagram":
         try:
-            design = await diagram_interpreter.interpret_async(
-                content, filename, notes=notes
-            )
+            design = await diagram_interpreter.execute(content, filename, notes=notes)
         except DiagramInterpretationError as exc:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)
@@ -415,7 +414,7 @@ def _require_stage(record: SessionRecord, expected: str, conflict_detail: str) -
         raise HTTPException(status.HTTP_409_CONFLICT, conflict_detail)
 
 
-def _upsert_guarded(store: SessionStore, record: SessionRecord) -> SessionRecord:
+def _upsert_guarded(store: SessionStorePort, record: SessionRecord) -> SessionRecord:
     """``store.upsert()``, turning a lost ETag race into an HTTP 409.
 
     Every call site here loaded ``record`` via ``load_owned``/``store.get()``
@@ -444,9 +443,9 @@ def _upsert_guarded(store: SessionStore, record: SessionRecord) -> SessionRecord
 def start_run(
     body: StartRunRequest,
     request: Request,
-    store: Annotated[SessionStore, Depends(get_session_store)],
-    artifact_store: Annotated[ArtifactStore, Depends(get_artifact_store)],
-    analyzer: Annotated[RequirementsAnalyzer, Depends(get_requirements_analyzer)],
+    store: Annotated[SessionStorePort, Depends(get_session_store)],
+    artifact_store: Annotated[ArtifactStorePort, Depends(get_artifact_store)],
+    analyzer: Annotated[AnalyzeRequirementsUseCase, Depends(get_requirements_analyzer)],
 ) -> RequirementsRunView:
     owner_oid, owner_name = owner_fields(request)
 
@@ -458,7 +457,13 @@ def start_run(
     )
 
     record.requirements_version = 1
-    record.requirements = analyzer.analyze(user_input=body.input)
+    # Sync route (FastAPI runs it in a worker thread with no event loop of
+    # its own) calling this use case's async `execute` — see
+    # `app/infrastructure/sync_bridge.py`. `start_run_from_upload` below is
+    # `async def` already and awaits `execute` directly instead.
+    record.requirements = run_sync(
+        analyzer.execute(user_input=body.input), caller="start_run"
+    )
     record.requirements_blob = _persist_requirements_blob(
         artifact_store, record, body.input
     )
@@ -475,7 +480,7 @@ def start_run(
 async def start_run_from_upload(
     request: Request,
     file: Annotated[UploadFile, File()],
-    store: Annotated[SessionStore, Depends(get_session_store)],
+    store: Annotated[SessionStorePort, Depends(get_session_store)],
     deps: Annotated[
         RequirementsUploadDependencies, Depends(get_requirements_upload_dependencies)
     ],
@@ -493,7 +498,7 @@ async def start_run_from_upload(
     multipart ``UploadFile``/``Form`` parsing on one route, hence a
     separate route rather than an optional-file parameter on ``start_run``.
 
-    An uploaded PNG/JPG/JPEG is classified first (``app/vision.py``): a
+    An uploaded PNG/JPG/JPEG is classified first (``ClassifyImageUseCase``): a
     document screenshot proceeds through that same requirements pipeline
     (via ``_resolve_image_upload``, then unchanged from here on), while a
     system design/workflow diagram instead jumps this brand-new session
@@ -542,7 +547,7 @@ async def start_run_from_upload(
     )
 
     record.requirements_version = 1
-    record.requirements = await deps.analyzer.analyze_async(user_input=source_text)
+    record.requirements = await deps.analyzer.execute(user_input=source_text)
     record.source_file_blob = deps.artifact_store.save_source_file(
         record.session_id, record.requirements_version, filename, content
     )
@@ -560,14 +565,14 @@ async def start_run_from_upload(
 )
 def list_runs(
     request: Request,
-    store: Annotated[SessionStore, Depends(get_session_store)],
+    store: Annotated[SessionStorePort, Depends(get_session_store)],
 ) -> list[RequirementsRunView]:
     """The caller's own sessions, newest first — every session for an Admin.
 
     With ``AUTH_ENABLED=false`` (or an anonymous, non-Admin caller),
     ``owner_fields`` returns ``(None, None)`` — every session created
     locally is unowned — so this always returns ``[]`` rather than every
-    session anyone has ever started. That matches ``SessionStore
+    session anyone has ever started. That matches ``SessionStorePort
     .list_for_owner``'s own "unowned records are nobody's" behavior; it
     isn't a separate special case here. An Admin-role caller instead sees
     every session regardless of owner (``list_all``) — "Admins can manage
@@ -590,7 +595,7 @@ def list_runs(
 def get_run(
     session_id: str,
     request: Request,
-    store: Annotated[SessionStore, Depends(get_session_store)],
+    store: Annotated[SessionStorePort, Depends(get_session_store)],
 ) -> RequirementsRunView:
     record = load_owned(store, session_id, request)
     return RequirementsRunView.from_record(record)
@@ -604,7 +609,7 @@ def rename_run(
     session_id: str,
     body: RenameRunRequest,
     request: Request,
-    store: Annotated[SessionStore, Depends(get_session_store)],
+    store: Annotated[SessionStorePort, Depends(get_session_store)],
 ) -> RequirementsRunView:
     """Set this session's display name — a label only.
 
@@ -641,9 +646,9 @@ def refine_run(
     session_id: str,
     body: RefineRunRequest,
     request: Request,
-    store: Annotated[SessionStore, Depends(get_session_store)],
-    artifact_store: Annotated[ArtifactStore, Depends(get_artifact_store)],
-    analyzer: Annotated[RequirementsAnalyzer, Depends(get_requirements_analyzer)],
+    store: Annotated[SessionStorePort, Depends(get_session_store)],
+    artifact_store: Annotated[ArtifactStorePort, Depends(get_artifact_store)],
+    analyzer: Annotated[AnalyzeRequirementsUseCase, Depends(get_requirements_analyzer)],
 ) -> RequirementsRunView:
     record = load_owned(store, session_id, request)
 
@@ -661,9 +666,13 @@ def refine_run(
     # describing *this* version's source.
     record.source_filename = None
     record.source_file_blob = None
-    record.requirements = analyzer.analyze(
-        user_input=body.input,
-        previous_artifact=record.requirements,
+    # Sync route — see `start_run`'s comment on `run_sync`.
+    record.requirements = run_sync(
+        analyzer.execute(
+            user_input=body.input,
+            previous_artifact=record.requirements,
+        ),
+        caller="refine_run",
     )
     record.requirements_blob = _persist_requirements_blob(
         artifact_store, record, body.input
@@ -681,7 +690,7 @@ async def refine_run_from_upload(
     session_id: str,
     request: Request,
     file: Annotated[UploadFile, File()],
-    store: Annotated[SessionStore, Depends(get_session_store)],
+    store: Annotated[SessionStorePort, Depends(get_session_store)],
     deps: Annotated[
         RequirementsUploadDependencies, Depends(get_requirements_upload_dependencies)
     ],
@@ -734,7 +743,7 @@ async def refine_run_from_upload(
     record.requirements_version += 1
     record.source_text = source_text
     record.source_filename = filename
-    record.requirements = await deps.analyzer.analyze_async(
+    record.requirements = await deps.analyzer.execute(
         user_input=source_text,
         previous_artifact=record.requirements,
     )
@@ -756,7 +765,7 @@ async def refine_run_from_upload(
 def accept_run(
     session_id: str,
     request: Request,
-    store: Annotated[SessionStore, Depends(get_session_store)],
+    store: Annotated[SessionStorePort, Depends(get_session_store)],
     deps: Annotated[
         ArchitectureGenerationDependencies,
         Depends(get_architecture_generation_dependencies),
@@ -831,7 +840,7 @@ def refine_architecture(
     session_id: str,
     body: RefineArchitectureRequest,
     request: Request,
-    store: Annotated[SessionStore, Depends(get_session_store)],
+    store: Annotated[SessionStorePort, Depends(get_session_store)],
     deps: Annotated[
         ArchitectureGenerationDependencies,
         Depends(get_architecture_generation_dependencies),
@@ -843,7 +852,7 @@ def refine_architecture(
     (which only fires once, from ``STAGE_REQUIREMENTS``), this can be called
     repeatedly once a session has reached ``STAGE_ARCHITECTURE``, each call
     producing a new design version built on top of the previous one rather
-    than starting from scratch — see ``SystemDesignAnalyzer.analyze``'s
+    than starting from scratch — see ``GenerateSystemDesignUseCase.execute``'s
     ``previous_design``/``refinement_input`` parameters.
     """
     record = load_owned(store, session_id, request)
@@ -909,7 +918,7 @@ def refine_architecture(
 
 
 def _record_approval_decision(
-    store: SessionStore,
+    store: SessionStorePort,
     record: SessionRecord,
     request: Request,
     decision: str,
@@ -959,7 +968,7 @@ def approve_run(
     session_id: str,
     body: ApprovalDecisionRequest,
     request: Request,
-    store: Annotated[SessionStore, Depends(get_session_store)],
+    store: Annotated[SessionStorePort, Depends(get_session_store)],
 ) -> RequirementsRunView:
     """Record an "approved" decision against the current architecture version.
 
@@ -982,7 +991,7 @@ def reject_run(
     session_id: str,
     body: ApprovalDecisionRequest,
     request: Request,
-    store: Annotated[SessionStore, Depends(get_session_store)],
+    store: Annotated[SessionStorePort, Depends(get_session_store)],
 ) -> RequirementsRunView:
     """Record a "rejected" decision against the current architecture version.
 
@@ -1005,8 +1014,8 @@ def reject_run(
 def get_source_file(
     session_id: str,
     request: Request,
-    store: Annotated[SessionStore, Depends(get_session_store)],
-    artifact_store: Annotated[ArtifactStore, Depends(get_artifact_store)],
+    store: Annotated[SessionStorePort, Depends(get_session_store)],
+    artifact_store: Annotated[ArtifactStorePort, Depends(get_artifact_store)],
 ) -> Response:
     """Download the original uploaded file behind the current requirements version.
 

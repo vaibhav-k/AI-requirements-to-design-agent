@@ -1,11 +1,12 @@
 """Requirements bounded context — domain entities and value objects.
 
 Moved verbatim from ``app/models.py`` as the first slice of the Clean
-Architecture migration (see README). ``app/models.py`` now re-exports
-everything from this module for backward compatibility while the rest
-of the codebase (storage, API routes, MCP server, CLI, tests) still
-imports from the old path; it will be retired once every importer has
-migrated to ``app.domain.requirements`` directly, in a later slice.
+Architecture migration (see README). ``app/models.py`` used to
+re-export everything from this module for backward compatibility while
+the rest of the codebase (storage, API routes, MCP server, CLI, tests)
+still imported from the old path; it has since been deleted once every
+importer migrated to ``app.domain.requirements`` directly (see README ->
+"Clean Architecture Migration").
 
 Nothing in this module performs I/O or imports anything from
 ``app.application``, ``app.infrastructure``, ``app.api``, ``app.web``,

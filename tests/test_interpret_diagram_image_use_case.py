@@ -3,15 +3,15 @@ from __future__ import annotations
 from app.application.use_cases.interpret_diagram_image import (
     InterpretDiagramImageUseCase,
 )
-from app.design.models import SystemDesignArtifact
+from app.domain.design import SystemDesignArtifact
 
 
 class _FakePort:
     def __init__(self, design: SystemDesignArtifact) -> None:
         self.design = design
-        self.calls: list[
-            tuple[bytes, str, SystemDesignArtifact | None, str | None]
-        ] = []
+        self.calls: list[tuple[bytes, str, SystemDesignArtifact | None, str | None]] = (
+            []
+        )
 
     async def interpret(
         self,

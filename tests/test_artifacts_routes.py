@@ -16,8 +16,8 @@ from app.api.dependencies import (
     get_validator,
 )
 from app.config import Settings
-from app.infrastructure.session_store import SessionRecord
-from app.models import RequirementsArtifact, StoredArtifact
+from app.domain.requirements import RequirementsArtifact, StoredArtifact
+from app.domain.session import SessionRecord
 from app.web.main import create_app
 
 
@@ -147,10 +147,8 @@ def test_get_requirements_version_returns_the_unwrapped_artifact(
     client: TestClient, fakes: dict[str, MagicMock]
 ) -> None:
     own_session(fakes)
-    fakes[
-        "artifact_store"
-    ].get_requirements_json.return_value = make_stored_artifact_json(
-        summary="v1 summary"
+    fakes["artifact_store"].get_requirements_json.return_value = (
+        make_stored_artifact_json(summary="v1 summary")
     )
 
     response = client.get("/requirements-runs/abc-123/requirements/1")
@@ -204,9 +202,9 @@ def test_get_architecture_version_returns_the_design(
     client: TestClient, fakes: dict[str, MagicMock]
 ) -> None:
     own_session(fakes)
-    fakes[
-        "artifact_store"
-    ].get_design_json.return_value = '{"architecture_summary": "A design."}'
+    fakes["artifact_store"].get_design_json.return_value = (
+        '{"architecture_summary": "A design."}'
+    )
 
     response = client.get("/requirements-runs/abc-123/architecture/1")
 

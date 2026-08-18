@@ -17,16 +17,17 @@ from app.api.dependencies import (
     get_session_store,
     get_validator,
 )
-from app.config import Settings
-from app.design.models import SystemDesignArtifact
-from app.design.session import DesignGenerationWorkflowError
-from app.infrastructure.session_store import SessionConflictError, SessionRecord
-from app.models import RequirementsArtifact
-from app.vision import (
+from app.application.errors import (
     DiagramInterpretationError,
-    ImageClassification,
     ImageClassificationError,
+    SessionConflictError,
 )
+from app.config import Settings
+from app.design.session import DesignGenerationWorkflowError
+from app.domain.design import SystemDesignArtifact
+from app.domain.requirements import RequirementsArtifact
+from app.domain.session import SessionRecord
+from app.domain.vision import ImageClassification
 from app.web.main import create_app
 
 
@@ -55,40 +56,31 @@ def make_design(**overrides: object) -> SystemDesignArtifact:
 
 @pytest.fixture
 def fakes() -> dict[str, MagicMock]:
+    # Every use case now exposes exactly one method — async `execute(...)`
+    # — so there's no more sync/async pair to keep in sync here. The sync
+    # routes (`start_run`/`refine_run`) reach `execute` through
+    # `run_sync` (see app/infrastructure/sync_bridge.py); the already-async
+    # routes/helpers (`start_run_from_upload`/`refine_run_from_upload`/
+    # `_resolve_image_upload`) `await` it directly. Either way, `execute`
+    # must itself be awaitable, hence `AsyncMock` rather than a plain
+    # `MagicMock` attribute.
     requirements_analyzer = MagicMock()
-    # `start_run`/`refine_run` call the sync `.analyze(...)`; the upload
-    # routes (`start_run_from_upload`/`refine_run_from_upload`) call the
-    # async `.analyze_async(...)` instead (see app/analyzer.py — the sync
-    # facade can't be called from a running event loop). Delegating to
-    # `.analyze` here means every existing test that configures
-    # `.analyze.return_value`/`.side_effect` keeps working unchanged for
-    # both code paths, rather than needing every upload test updated too.
-    requirements_analyzer.analyze_async = AsyncMock(
-        side_effect=requirements_analyzer.analyze
-    )
+    requirements_analyzer.execute = AsyncMock()
 
-    # `image_classifier`/`diagram_interpreter` follow the exact same
-    # shape: `_resolve_image_upload` (itself `async def`, already running
-    # on the event loop) calls the async `.classify_async(...)`/
-    # `.interpret_async(...)` instead of the sync `.classify(...)`/
-    # `.interpret(...)` (see app/vision.py — the sync facade can't be
-    # called from a running event loop). Delegating each async mock to
-    # its sync counterpart means every test that configures
-    # `.classify.return_value`/`.interpret.side_effect` keeps working
-    # unchanged.
+    design_analyzer = MagicMock()
+    design_analyzer.execute = AsyncMock()
+
     image_classifier = MagicMock()
-    image_classifier.classify_async = AsyncMock(side_effect=image_classifier.classify)
+    image_classifier.execute = AsyncMock()
 
     diagram_interpreter = MagicMock()
-    diagram_interpreter.interpret_async = AsyncMock(
-        side_effect=diagram_interpreter.interpret
-    )
+    diagram_interpreter.execute = AsyncMock()
 
     return {
         "store": MagicMock(),
         "artifact_store": MagicMock(),
         "requirements_analyzer": requirements_analyzer,
-        "design_analyzer": MagicMock(),
+        "design_analyzer": design_analyzer,
         "diagram_generator": MagicMock(),
         "validator": MagicMock(),
         "document_extractor": MagicMock(),
@@ -152,7 +144,7 @@ def client(fakes: dict[str, MagicMock]) -> Iterator[TestClient]:
 def test_start_run_creates_a_session_and_returns_requirements(
     client: TestClient, fakes: dict[str, MagicMock]
 ) -> None:
-    fakes["requirements_analyzer"].analyze.return_value = make_requirements()
+    fakes["requirements_analyzer"].execute.return_value = make_requirements()
     fakes["artifact_store"].save.return_value = "dev/x/requirements/v1.json"
 
     response = client.post("/requirements-runs", json={"input": "Build a todo app."})
@@ -213,7 +205,7 @@ def test_refine_run_bumps_the_version_and_persists(
         requirements=make_requirements(),
     )
     fakes["store"].get.return_value = record
-    fakes["requirements_analyzer"].analyze.return_value = make_requirements(
+    fakes["requirements_analyzer"].execute.return_value = make_requirements(
         summary="A refined todo app."
     )
 
@@ -261,7 +253,7 @@ def test_accept_run_generates_and_persists_the_architecture(
         requirements=make_requirements(),
     )
     fakes["store"].get.return_value = record
-    fakes["design_analyzer"].analyze.return_value = make_design()
+    fakes["design_analyzer"].execute.return_value = make_design()
     fakes["validator"].validate.side_effect = lambda design: design
     fakes["diagram_generator"].generate.return_value = "<svg></svg>"
     fakes["artifact_store"].save_design_json.return_value = "dev/abc-123/design/v1.json"
@@ -308,7 +300,7 @@ def test_accept_run_rejects_a_second_call_while_already_generating(
     response = client.post("/requirements-runs/abc-123/accept")
 
     assert response.status_code == 409
-    fakes["design_analyzer"].analyze.assert_not_called()
+    fakes["design_analyzer"].execute.assert_not_called()
     fakes["store"].upsert.assert_not_called()
 
 
@@ -321,7 +313,7 @@ def test_accept_run_returns_422_and_reverts_stage_when_generation_fails(
         requirements=make_requirements(),
     )
     fakes["store"].get.return_value = record
-    fakes["design_analyzer"].analyze.side_effect = DesignGenerationWorkflowError("boom")
+    fakes["design_analyzer"].execute.side_effect = DesignGenerationWorkflowError("boom")
 
     stage_snapshots: list[str] = []
 
@@ -360,7 +352,7 @@ def test_accept_run_returns_409_when_a_concurrent_write_wins_the_race(
     response = client.post("/requirements-runs/abc-123/accept")
 
     assert response.status_code == 409
-    fakes["design_analyzer"].analyze.assert_not_called()
+    fakes["design_analyzer"].execute.assert_not_called()
 
 
 def test_refine_run_returns_409_when_a_concurrent_write_wins_the_race(
@@ -372,7 +364,7 @@ def test_refine_run_returns_409_when_a_concurrent_write_wins_the_race(
         requirements=make_requirements(),
     )
     fakes["store"].get.return_value = record
-    fakes["requirements_analyzer"].analyze.return_value = make_requirements(
+    fakes["requirements_analyzer"].execute.return_value = make_requirements(
         summary="A refined todo app."
     )
     fakes["store"].upsert.side_effect = SessionConflictError("conflict")
@@ -395,7 +387,7 @@ def test_refine_architecture_rejects_when_stage_is_not_architecture(
     )
 
     assert response.status_code == 409
-    fakes["design_analyzer"].analyze.assert_not_called()
+    fakes["design_analyzer"].execute.assert_not_called()
 
 
 def test_refine_architecture_rejects_a_second_call_while_already_generating(
@@ -414,7 +406,7 @@ def test_refine_architecture_rejects_a_second_call_while_already_generating(
     )
 
     assert response.status_code == 409
-    fakes["design_analyzer"].analyze.assert_not_called()
+    fakes["design_analyzer"].execute.assert_not_called()
     fakes["store"].upsert.assert_not_called()
 
 
@@ -430,7 +422,7 @@ def test_refine_architecture_bumps_the_version_and_persists(
         design=make_design(),
     )
     fakes["store"].get.return_value = record
-    fakes["design_analyzer"].analyze.return_value = make_design(
+    fakes["design_analyzer"].execute.return_value = make_design(
         architecture_summary="A refined design."
     )
     fakes["validator"].validate.side_effect = lambda design: design
@@ -462,7 +454,7 @@ def test_refine_architecture_bumps_the_version_and_persists(
     # The analyzer must have been called with the previous design as context
     # (the original, pre-refinement design), not asked to generate a fresh
     # architecture from scratch.
-    _, call_kwargs = fakes["design_analyzer"].analyze.call_args
+    _, call_kwargs = fakes["design_analyzer"].execute.call_args
     assert call_kwargs["previous_design"] == make_design()
     assert call_kwargs["refinement_input"] == "Add caching."
 
@@ -493,7 +485,7 @@ def test_refine_architecture_returns_422_and_reverts_stage_when_generation_fails
         design=make_design(),
     )
     fakes["store"].get.return_value = record
-    fakes["design_analyzer"].analyze.side_effect = DesignGenerationWorkflowError("boom")
+    fakes["design_analyzer"].execute.side_effect = DesignGenerationWorkflowError("boom")
 
     stage_snapshots: list[str] = []
 
@@ -597,7 +589,7 @@ def test_reject_run_does_not_block_a_later_refine_architecture_call(
         design=make_design(),
     )
     fakes["store"].get.return_value = record
-    fakes["design_analyzer"].analyze.return_value = make_design(
+    fakes["design_analyzer"].execute.return_value = make_design(
         architecture_summary="A refined design."
     )
     fakes["validator"].validate.side_effect = lambda design: design
@@ -644,7 +636,7 @@ def test_accept_run_starts_with_approval_status_pending(
         requirements=make_requirements(),
     )
     fakes["store"].get.return_value = record
-    fakes["design_analyzer"].analyze.return_value = make_design()
+    fakes["design_analyzer"].execute.return_value = make_design()
     fakes["validator"].validate.side_effect = lambda design: design
     fakes["diagram_generator"].generate.return_value = "<svg></svg>"
     fakes["artifact_store"].save_design_json.return_value = "dev/abc-123/design/v1.json"
@@ -693,11 +685,11 @@ def test_start_run_from_upload_extracts_text_and_creates_a_session(
     client: TestClient, fakes: dict[str, MagicMock]
 ) -> None:
     fakes["document_extractor"].extract.return_value = "Extracted requirements text."
-    fakes["requirements_analyzer"].analyze.return_value = make_requirements()
+    fakes["requirements_analyzer"].execute.return_value = make_requirements()
     fakes["artifact_store"].save.return_value = "dev/x/requirements/v1.json"
-    fakes[
-        "artifact_store"
-    ].save_source_file.return_value = "dev/x/requirements/v1_source.pdf"
+    fakes["artifact_store"].save_source_file.return_value = (
+        "dev/x/requirements/v1_source.pdf"
+    )
 
     response = client.post(
         "/requirements-runs/upload",
@@ -712,7 +704,7 @@ def test_start_run_from_upload_extracts_text_and_creates_a_session(
         "spec.pdf", b"%PDF-1.4 fake bytes"
     )
     fakes["artifact_store"].save_source_file.assert_called_once()
-    fakes["requirements_analyzer"].analyze.assert_called_once_with(
+    fakes["requirements_analyzer"].execute.assert_called_once_with(
         user_input="Extracted requirements text."
     )
 
@@ -721,7 +713,7 @@ def test_start_run_from_upload_appends_notes_to_extracted_text(
     client: TestClient, fakes: dict[str, MagicMock]
 ) -> None:
     fakes["document_extractor"].extract.return_value = "Extracted text."
-    fakes["requirements_analyzer"].analyze.return_value = make_requirements()
+    fakes["requirements_analyzer"].execute.return_value = make_requirements()
     fakes["artifact_store"].save.return_value = "dev/x/requirements/v1.json"
     fakes["artifact_store"].save_source_file.return_value = "blob"
 
@@ -732,7 +724,7 @@ def test_start_run_from_upload_appends_notes_to_extracted_text(
     )
 
     assert response.status_code == 201
-    fakes["requirements_analyzer"].analyze.assert_called_once_with(
+    fakes["requirements_analyzer"].execute.assert_called_once_with(
         user_input="Extracted text.\n\nFocus on payments."
     )
 
@@ -806,7 +798,7 @@ def test_refine_run_from_upload_extracts_text_and_bumps_version(
     )
     fakes["store"].get.return_value = record
     fakes["document_extractor"].extract.return_value = "More requirements text."
-    fakes["requirements_analyzer"].analyze.return_value = make_requirements(
+    fakes["requirements_analyzer"].execute.return_value = make_requirements(
         summary="Updated."
     )
     fakes["artifact_store"].save.return_value = "dev/abc-123/requirements/v2.json"
@@ -922,15 +914,15 @@ def test_start_run_from_upload_with_document_image_uses_ocr_pipeline(
     same OCR-extraction-then-analyze pipeline as before image
     classification existed — the diagram interpreter/design pipeline is
     never touched."""
-    fakes["image_classifier"].classify.return_value = ImageClassification(
+    fakes["image_classifier"].execute.return_value = ImageClassification(
         kind="document", reasoning="It's a screenshot of typed notes."
     )
     fakes["document_extractor"].extract.return_value = "Extracted requirements text."
-    fakes["requirements_analyzer"].analyze.return_value = make_requirements()
+    fakes["requirements_analyzer"].execute.return_value = make_requirements()
     fakes["artifact_store"].save.return_value = "dev/x/requirements/v1.json"
-    fakes[
-        "artifact_store"
-    ].save_source_file.return_value = "dev/x/requirements/v1_source.png"
+    fakes["artifact_store"].save_source_file.return_value = (
+        "dev/x/requirements/v1_source.png"
+    )
 
     response = client.post(
         "/requirements-runs/upload",
@@ -941,8 +933,8 @@ def test_start_run_from_upload_with_document_image_uses_ocr_pipeline(
     body = response.json()
     assert body["stage"] == "requirements"
     assert body["requirements"]["summary"] == "A todo app."
-    fakes["diagram_interpreter"].interpret.assert_not_called()
-    fakes["design_analyzer"].analyze.assert_not_called()
+    fakes["diagram_interpreter"].execute.assert_not_called()
+    fakes["design_analyzer"].execute.assert_not_called()
 
 
 def test_start_run_from_upload_with_diagram_image_jumps_to_architecture(
@@ -952,19 +944,19 @@ def test_start_run_from_upload_with_diagram_image_jumps_to_architecture(
     pipeline entirely and lands the new session directly in
     STAGE_ARCHITECTURE, through the same validate/render/persist tail
     accept_run uses."""
-    fakes["image_classifier"].classify.return_value = ImageClassification(
+    fakes["image_classifier"].execute.return_value = ImageClassification(
         kind="diagram", reasoning="It's boxes and arrows depicting services."
     )
-    fakes["diagram_interpreter"].interpret.return_value = make_design(
+    fakes["diagram_interpreter"].execute.return_value = make_design(
         architecture_summary="Redrawn from the uploaded diagram."
     )
     fakes["validator"].validate.side_effect = lambda design: design
     fakes["diagram_generator"].generate.return_value = "<svg></svg>"
     fakes["artifact_store"].save_design_json.return_value = "dev/x/design/v1.json"
     fakes["artifact_store"].save_design_svg.return_value = "dev/x/design/v1.svg"
-    fakes[
-        "artifact_store"
-    ].save_source_file.return_value = "dev/x/requirements/v1_source.png"
+    fakes["artifact_store"].save_source_file.return_value = (
+        "dev/x/requirements/v1_source.png"
+    )
     fakes["artifact_store"].save.return_value = "dev/x/requirements/v1.json"
 
     response = client.post(
@@ -983,14 +975,14 @@ def test_start_run_from_upload_with_diagram_image_jumps_to_architecture(
     # tab isn't blank, even though nothing was typed or OCR'd.
     assert body["requirements"] is not None
     assert "uploaded system design diagram" in body["requirements"]["summary"]
-    fakes["requirements_analyzer"].analyze.assert_not_called()
+    fakes["requirements_analyzer"].execute.assert_not_called()
     fakes["store"].create.assert_called_once()
 
 
 def test_start_run_from_upload_rejects_when_image_classification_fails(
     client: TestClient, fakes: dict[str, MagicMock]
 ) -> None:
-    fakes["image_classifier"].classify.side_effect = ImageClassificationError("boom")
+    fakes["image_classifier"].execute.side_effect = ImageClassificationError("boom")
 
     response = client.post(
         "/requirements-runs/upload",
@@ -1004,10 +996,10 @@ def test_start_run_from_upload_rejects_when_image_classification_fails(
 def test_start_run_from_upload_rejects_when_diagram_interpretation_fails(
     client: TestClient, fakes: dict[str, MagicMock]
 ) -> None:
-    fakes["image_classifier"].classify.return_value = ImageClassification(
+    fakes["image_classifier"].execute.return_value = ImageClassification(
         kind="diagram", reasoning="Boxes and arrows."
     )
-    fakes["diagram_interpreter"].interpret.side_effect = DiagramInterpretationError(
+    fakes["diagram_interpreter"].execute.side_effect = DiagramInterpretationError(
         "boom"
     )
 
@@ -1029,19 +1021,19 @@ def test_refine_run_from_upload_with_diagram_image_jumps_to_architecture(
         requirements=make_requirements(),
     )
     fakes["store"].get.return_value = record
-    fakes["image_classifier"].classify.return_value = ImageClassification(
+    fakes["image_classifier"].execute.return_value = ImageClassification(
         kind="diagram", reasoning="Boxes and arrows depicting components."
     )
-    fakes["diagram_interpreter"].interpret.return_value = make_design(
+    fakes["diagram_interpreter"].execute.return_value = make_design(
         architecture_summary="Redrawn from the uploaded diagram."
     )
     fakes["validator"].validate.side_effect = lambda design: design
     fakes["diagram_generator"].generate.return_value = "<svg></svg>"
     fakes["artifact_store"].save_design_json.return_value = "dev/abc-123/design/v1.json"
     fakes["artifact_store"].save_design_svg.return_value = "dev/abc-123/design/v1.svg"
-    fakes[
-        "artifact_store"
-    ].save_source_file.return_value = "dev/abc-123/requirements/v1_source.png"
+    fakes["artifact_store"].save_source_file.return_value = (
+        "dev/abc-123/requirements/v1_source.png"
+    )
 
     response = client.post(
         "/requirements-runs/abc-123/refine/upload",
@@ -1055,7 +1047,7 @@ def test_refine_run_from_upload_with_diagram_image_jumps_to_architecture(
     # Requirements already existed on this session — the diagram branch
     # must not overwrite them with a stub.
     assert body["requirements"]["summary"] == "A todo app."
-    fakes["requirements_analyzer"].analyze.assert_not_called()
+    fakes["requirements_analyzer"].execute.assert_not_called()
 
 
 def test_refine_run_from_upload_with_diagram_image_blocked_outside_requirements(
@@ -1072,4 +1064,4 @@ def test_refine_run_from_upload_with_diagram_image_blocked_outside_requirements(
     )
 
     assert response.status_code == 409
-    fakes["image_classifier"].classify.assert_not_called()
+    fakes["image_classifier"].execute.assert_not_called()

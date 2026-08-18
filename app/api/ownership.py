@@ -35,8 +35,9 @@ import logging
 
 from fastapi import HTTPException, Request, status
 
+from app.application.ports import SessionStorePort
 from app.config import get_settings
-from app.infrastructure.session_store import SessionRecord, SessionStore
+from app.domain.session import SessionRecord
 from app.security.auth import (
     ROLE_ADMIN,
     current_claims,
@@ -96,6 +97,8 @@ def require_owned(record: SessionRecord | None, request: Request) -> SessionReco
     return record
 
 
-def load_owned(store: SessionStore, session_id: str, request: Request) -> SessionRecord:
+def load_owned(
+    store: SessionStorePort, session_id: str, request: Request
+) -> SessionRecord:
     """Fetch a record and authorise it in one step — the call every route uses."""
     return require_owned(store.get(session_id), request)

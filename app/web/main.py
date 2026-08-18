@@ -28,6 +28,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes.artifacts import router as artifacts_router
 from app.api.routes.requirements import router as requirements_router
 from app.config import get_settings
+from app.infrastructure.artifact_store import (
+    AZURE_CONNECTION_STRING,
+    AZURE_CONTAINER,
+    ArtifactStore,
+)
 from app.infrastructure.session_store import CosmosSessionStore
 from app.security.auth import (
     ALL_APP_ROLES,
@@ -36,7 +41,6 @@ from app.security.auth import (
     principal_of,
     require_user,
 )
-from app.storage import AZURE_CONNECTION_STRING, AZURE_CONTAINER, ArtifactStore
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

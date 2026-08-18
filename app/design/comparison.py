@@ -22,7 +22,7 @@ from typing import Generic, TypeVar
 
 from pydantic import BaseModel
 
-from app.design.models import (
+from app.domain.design import (
     DesignAssumption,
     DesignComponent,
     DesignInterface,

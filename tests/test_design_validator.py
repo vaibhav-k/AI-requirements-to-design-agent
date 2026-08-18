@@ -1,14 +1,14 @@
 import pytest
 
-from app.design.models import (
+from app.design.validator import (
+    ArchitectureValidationError,
+    ArchitectureValidator,
+)
+from app.domain.design import (
     DesignComponent,
     DesignInterface,
     ExternalDependency,
     SystemDesignArtifact,
-)
-from app.design.validator import (
-    ArchitectureValidationError,
-    ArchitectureValidator,
 )
 
 

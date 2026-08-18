@@ -17,7 +17,7 @@ from agent_framework import ChatOptions, Content, Message
 from agent_framework.openai import OpenAIChatClient
 
 from app.application.errors import DiagramInterpretationError
-from app.design.models import SystemDesignArtifact
+from app.domain.design import SystemDesignArtifact
 from app.infrastructure.agents.vision_support import image_content
 
 _INSTRUCTIONS = (

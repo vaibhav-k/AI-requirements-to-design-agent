@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -30,9 +30,9 @@ from app.api.dependencies import (
     get_validator,
 )
 from app.config import Settings
-from app.design.models import SystemDesignArtifact
-from app.infrastructure.session_store import SessionRecord
-from app.models import RequirementsArtifact
+from app.domain.design import SystemDesignArtifact
+from app.domain.requirements import RequirementsArtifact
+from app.domain.session import SessionRecord
 from app.web.main import create_app
 
 
@@ -61,11 +61,22 @@ def make_design(**overrides: object) -> SystemDesignArtifact:
 
 @pytest.fixture
 def fakes() -> dict[str, MagicMock]:
+    # `.execute` must itself be awaitable — both `run_sync` (the sync
+    # routes) and a direct `await` (the async ones) call it the same way a
+    # real ``AnalyzeRequirementsUseCase``/``GenerateSystemDesignUseCase``
+    # would. See ``test_requirements_routes.py``'s ``fakes`` fixture for
+    # the fuller explanation.
+    requirements_analyzer = MagicMock()
+    requirements_analyzer.execute = AsyncMock()
+
+    design_analyzer = MagicMock()
+    design_analyzer.execute = AsyncMock()
+
     return {
         "store": MagicMock(),
         "artifact_store": MagicMock(),
-        "requirements_analyzer": MagicMock(),
-        "design_analyzer": MagicMock(),
+        "requirements_analyzer": requirements_analyzer,
+        "design_analyzer": design_analyzer,
         "diagram_generator": MagicMock(),
         "validator": MagicMock(),
         "document_extractor": MagicMock(),
@@ -138,7 +149,7 @@ def with_claims(roles: list[str], oid: str = "caller-1") -> Any:
 def test_start_run_allowed_for_user_role(
     rbac_app: TestClient, fakes: dict[str, MagicMock]
 ) -> None:
-    fakes["requirements_analyzer"].analyze.return_value = make_requirements()
+    fakes["requirements_analyzer"].execute.return_value = make_requirements()
     fakes["artifact_store"].save.return_value = "blob"
 
     with with_claims(["User"]):
@@ -179,7 +190,7 @@ def test_start_run_rejected_for_no_roles_at_all(rbac_app: TestClient) -> None:
 def test_start_run_allowed_for_admin_role(
     rbac_app: TestClient, fakes: dict[str, MagicMock]
 ) -> None:
-    fakes["requirements_analyzer"].analyze.return_value = make_requirements()
+    fakes["requirements_analyzer"].execute.return_value = make_requirements()
     fakes["artifact_store"].save.return_value = "blob"
 
     with with_claims(["Admin"]):
@@ -227,7 +238,7 @@ def test_accept_run_allowed_for_architect_role(
         requirements=make_requirements(),
     )
     fakes["store"].get.return_value = record
-    fakes["design_analyzer"].analyze.return_value = make_design()
+    fakes["design_analyzer"].execute.return_value = make_design()
     fakes["validator"].validate.side_effect = lambda design: design
     fakes["diagram_generator"].generate.return_value = "<svg></svg>"
     fakes["artifact_store"].save_design_json.return_value = "blob.json"

@@ -37,6 +37,22 @@ target-version = "py311"
 # ("use Annotated for FastAPI dependency injection instead of a mutable
 # default argument") — both raised by SonarQube against app/api/routes/*.py.
 select = ["E", "F", "I", "B", "UP", "FAST"]
+# UP046/UP047 ("use PEP 695 type parameter syntax") suggest a
+# `class Foo[T]:`/`def foo[T](...)` syntax that only parses on Python
+# 3.12+ — this project's `target-version = "py311"` above (matching
+# `requires-python = ">=3.11"`) is supposed to suppress both rules, and
+# does under the version of ruff this was verified against. They're
+# ignored explicitly anyway rather than left to that inference, because
+# a ruff install/config that resolves its effective target version
+# differently (a newer/older ruff release changing how target-version
+# is derived, a global user-level ruff config, an IDE extension running
+# its own default) would otherwise "fix" `app/design/comparison.py`'s
+# `ListDiffChange`/`ListDiff`/`_diff_by_id` and
+# `app/infrastructure/sync_bridge.py`'s `run_sync` into syntax that
+# fails to parse for anyone still on 3.11 — silently breaking the
+# `>=3.11` support this project advertises. Explicit `ignore` doesn't
+# depend on that inference resolving the same way everywhere.
+ignore = ["UP046", "UP047"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["B011"]

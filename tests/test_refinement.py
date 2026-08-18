@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
-from app.analyzer import RequirementsAnalyzer
-from app.models import (
+from app.application.use_cases.analyze_requirements import AnalyzeRequirementsUseCase
+from app.domain.requirements import (
     RequirementsArtifact,
 )
 from app.session import DesignSession
@@ -31,7 +31,7 @@ def create_artifact(
 def test_refinement_passes_previous_artifact() -> None:
     """A refinement should pass the current artifact to the analyzer."""
 
-    analyzer = MagicMock(RequirementsAnalyzer)
+    analyzer = MagicMock(spec=AnalyzeRequirementsUseCase)
 
     store = MagicMock()
 
@@ -39,10 +39,15 @@ def test_refinement_passes_previous_artifact() -> None:
 
     refined_artifact = create_artifact("Refined analysis.")
 
-    analyzer.analyze.side_effect = [
-        first_artifact,
-        refined_artifact,
-    ]
+    # `DesignSession.analyze` bridges into this use case's async `execute`
+    # via `run_sync` (see app/infrastructure/sync_bridge.py) — an `AsyncMock`
+    # here stands in for the coroutine that bridge awaits.
+    analyzer.execute = AsyncMock(
+        side_effect=[
+            first_artifact,
+            refined_artifact,
+        ]
+    )
 
     session = DesignSession(analyzer, store)
 
@@ -53,13 +58,13 @@ def test_refinement_passes_previous_artifact() -> None:
     assert first_result.version == 1
     assert second_result.version == 2
 
-    assert analyzer.analyze.call_count == 2
+    assert analyzer.execute.call_count == 2
 
-    first_call = analyzer.analyze.call_args_list[0]
+    first_call = analyzer.execute.call_args_list[0]
 
     assert first_call.kwargs["previous_artifact"] is None
 
-    second_call = analyzer.analyze.call_args_list[1]
+    second_call = analyzer.execute.call_args_list[1]
 
     assert second_call.kwargs["previous_artifact"] == first_artifact
 

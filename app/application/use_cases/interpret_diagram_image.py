@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.application.ports import DiagramImageInterpreterPort
-from app.design.models import SystemDesignArtifact
+from app.domain.design import SystemDesignArtifact
 
 
 @dataclass(slots=True)

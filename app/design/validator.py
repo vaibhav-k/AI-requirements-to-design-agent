@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.design.models import (
+from app.domain.design import (
     DesignInterface,
     ExternalDependency,
     SystemDesignArtifact,
@@ -12,8 +12,7 @@ class ArchitectureValidationError(ValueError):
 
 
 class ArchitectureValidator:
-    """
-    Validate the semantic integrity of a system architecture.
+    """Validate the semantic integrity of a system architecture.
 
     ``validate`` itself only assembles the error list and raises — each
     individual rule lives in its own small, independently testable method
@@ -67,18 +66,7 @@ class ArchitectureValidator:
         ids: list[str],
         label: str,
     ) -> list[str]:
-        """
-        Return a single error if `ids` contains a duplicate.
-
-        Args:
-            ids: A list of IDs to check for duplicates.
-            label: A label for the type of ID being checked (e.g., "Component",
-                   "Interface", "External dependency").
-
-        Returns:
-            A list containing a single error message if duplicates are found, otherwise
-            an empty list.
-        """
+        """Return a single error if `ids` contains a duplicate."""
 
         if len(ids) == len(set(ids)):
             return []
@@ -94,16 +82,6 @@ class ArchitectureValidator:
         interfaces: list[DesignInterface],
         component_ids: set[str],
     ) -> list[str]:
-        """
-        Validate that each interface references valid source and target components.
-
-        Args:
-            interfaces: A list of DesignInterface objects to validate.
-            component_ids: A set of valid component IDs.
-
-        Returns:
-            A list of error messages for interfaces with invalid references.
-        """
         errors: list[str] = []
 
         for interface in interfaces:
@@ -121,16 +99,6 @@ class ArchitectureValidator:
         interface: DesignInterface,
         component_ids: set[str],
     ) -> list[str]:
-        """
-        Validate that a single interface references valid source and target components.
-
-        Args:
-            interface: The DesignInterface object to validate.
-            component_ids: A set of valid component IDs.
-
-        Returns:
-            A list of error messages for the interface with invalid references.
-        """
         errors: list[str] = []
 
         if interface.source_component not in component_ids:
@@ -163,16 +131,6 @@ class ArchitectureValidator:
         dependencies: list[ExternalDependency],
         component_ids: set[str],
     ) -> list[str]:
-        """
-        Validate that each external dependency references valid components.
-
-        Args:
-            dependencies: A list of ExternalDependency objects to validate.
-            component_ids: A set of valid component IDs.
-
-        Returns:
-            A list of error messages for external dependencies with invalid references.
-        """
         errors: list[str] = []
 
         for dependency in dependencies:
@@ -190,16 +148,6 @@ class ArchitectureValidator:
         dependency: ExternalDependency,
         component_ids: set[str],
     ) -> list[str]:
-        """
-        Validate that a single external dependency references valid components.
-
-        Args:
-            dependency: The ExternalDependency object to validate.
-            component_ids: A set of valid component IDs.
-
-        Returns:
-            A list of error messages for the external dependency with invalid references
-        """
         return [
             f"External dependency '{dependency.id}' references unknown "
             f"component '{component_id}'."
@@ -217,15 +165,6 @@ class ArchitectureValidator:
 
     @staticmethod
     def _collect_requirement_ids(design: SystemDesignArtifact) -> set[str]:
-        """
-        Collect all requirement traceability IDs from the design.
-
-        Args:
-            design: The SystemDesignArtifact to collect requirement IDs from.
-
-        Returns:
-            A set of all unique requirement traceability IDs found in the design.
-        """
         requirement_ids: set[str] = set()
 
         for component in design.components:
@@ -238,15 +177,6 @@ class ArchitectureValidator:
 
     @staticmethod
     def _validate_requirement_ids(requirement_ids: set[str]) -> list[str]:
-        """
-        Validate that requirement traceability IDs are not empty.
-
-        Args:
-            requirement_ids: A set of requirement traceability IDs to validate.
-
-        Returns:
-            A list of error messages for any empty requirement IDs found.
-        """
         # One message per blank/whitespace-only id in the set (matching the
         # original inline loop's behavior exactly) rather than deduping to a
         # single message — `requirement_ids` is a set, so this can only

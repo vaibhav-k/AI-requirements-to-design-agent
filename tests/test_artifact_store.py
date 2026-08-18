@@ -4,11 +4,11 @@ from unittest.mock import MagicMock, patch
 
 from azure.storage.blob import BlobServiceClient
 
-from app.models import (
+from app.domain.requirements import (
     RequirementsArtifact,
     StoredArtifact,
 )
-from app.storage import ArtifactStore
+from app.infrastructure.artifact_store import ArtifactStore
 
 
 def create_stored_artifact() -> StoredArtifact:
@@ -38,7 +38,7 @@ def create_stored_artifact() -> StoredArtifact:
     )
 
 
-@patch("app.storage.BlobServiceClient")
+@patch("app.infrastructure.artifact_store.BlobServiceClient")
 def test_save_uploads_json(
     mock_blob_service: MagicMock,
 ) -> None:
@@ -67,7 +67,7 @@ def test_save_uploads_json(
     blob.upload_blob.assert_called_once()
 
 
-@patch("app.storage.BlobServiceClient")
+@patch("app.infrastructure.artifact_store.BlobServiceClient")
 def test_close_closes_the_underlying_blob_service_client(
     mock_blob_service: MagicMock,
 ) -> None:
@@ -89,7 +89,7 @@ def test_close_closes_the_underlying_blob_service_client(
     store.service.close.assert_called_once()  # type: ignore[attr-defined]
 
 
-@patch("app.storage.BlobServiceClient")
+@patch("app.infrastructure.artifact_store.BlobServiceClient")
 def test_save_source_file_uploads_the_raw_bytes_with_the_original_extension(
     mock_blob_service: MagicMock,
 ) -> None:
@@ -111,7 +111,7 @@ def test_save_source_file_uploads_the_raw_bytes_with_the_original_extension(
     assert kwargs["content_settings"].content_type == "application/pdf"
 
 
-@patch("app.storage.BlobServiceClient")
+@patch("app.infrastructure.artifact_store.BlobServiceClient")
 def test_get_source_file_returns_none_when_nothing_was_uploaded(
     mock_blob_service: MagicMock,
 ) -> None:
@@ -124,7 +124,7 @@ def test_get_source_file_returns_none_when_nothing_was_uploaded(
     assert store.get_source_file("session-123", 1) is None
 
 
-@patch("app.storage.BlobServiceClient")
+@patch("app.infrastructure.artifact_store.BlobServiceClient")
 def test_get_source_file_downloads_the_matching_blob_by_prefix(
     mock_blob_service: MagicMock,
 ) -> None:

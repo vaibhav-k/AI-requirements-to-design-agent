@@ -2,7 +2,7 @@ from unittest.mock import Mock
 
 from azure.core.exceptions import ResourceNotFoundError
 
-from app.storage import ArtifactStore
+from app.infrastructure.artifact_store import ArtifactStore
 
 
 def make_store(blobs: list[Mock]) -> ArtifactStore:

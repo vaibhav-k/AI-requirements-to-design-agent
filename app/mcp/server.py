@@ -4,12 +4,15 @@ import json
 
 from mcp.server.fastmcp import FastMCP as MCPServer
 
-from app.analyzer import RequirementsAnalyzer
-from app.design.analyzer import SystemDesignAnalyzer
 from app.design.diagram import ArchitectureDiagramGenerator
-from app.design.models import SystemDesignArtifact
 from app.design.validator import ArchitectureValidator
-from app.models import RequirementsArtifact
+from app.domain.design import SystemDesignArtifact
+from app.domain.requirements import RequirementsArtifact
+from app.infrastructure.composition import (
+    build_requirements_use_case,
+    build_system_design_use_case,
+)
+from app.infrastructure.sync_bridge import run_sync
 
 mcp = MCPServer(
     "AI Requirements to System Design Agent",
@@ -19,8 +22,15 @@ mcp = MCPServer(
     ),
 )
 
-_requirements_analyzer = RequirementsAnalyzer()
-_design_analyzer = SystemDesignAnalyzer()
+# Composition-root singletons, constructed once at import time — the same
+# shape the old ``RequirementsAnalyzer()``/``SystemDesignAnalyzer()``
+# facades were constructed with, except each is now the real use case
+# (``AnalyzeRequirementsUseCase``/``GenerateSystemDesignUseCase``) wired to
+# a Microsoft Agent Framework adapter by ``app.infrastructure.composition``
+# rather than a facade class reading env vars in its own ``__init__``. See
+# ``tests/test_mcp.py`` for how tests replace ``.agent`` on these directly.
+_requirements_analyzer = build_requirements_use_case()
+_design_analyzer = build_system_design_use_case()
 _diagram_generator = ArchitectureDiagramGenerator()
 _validator = ArchitectureValidator()
 
@@ -38,7 +48,10 @@ def analyze_requirements(
         user_input: Free-text description of what the user wants to build.
     """
 
-    requirements = _requirements_analyzer.analyze(user_input)
+    requirements = run_sync(
+        _requirements_analyzer.execute(user_input),
+        caller="analyze_requirements",
+    )
 
     return requirements.model_dump_json(indent=2)
 
@@ -62,9 +75,12 @@ def refine_requirements(
 
     previous = RequirementsArtifact.model_validate_json(requirements_json)
 
-    requirements = _requirements_analyzer.analyze(
-        user_input,
-        previous_artifact=previous,
+    requirements = run_sync(
+        _requirements_analyzer.execute(
+            user_input,
+            previous_artifact=previous,
+        ),
+        caller="refine_requirements",
     )
 
     return requirements.model_dump_json(indent=2)
@@ -82,7 +98,10 @@ def generate_system_design(
 
     requirements = RequirementsArtifact.model_validate_json(requirements_json)
 
-    design = _design_analyzer.analyze(requirements)
+    design = run_sync(
+        _design_analyzer.execute(requirements),
+        caller="generate_system_design",
+    )
 
     return design.model_dump_json(indent=2)
 
@@ -111,10 +130,13 @@ def refine_architecture(
     requirements = RequirementsArtifact.model_validate_json(requirements_json)
     previous_design = SystemDesignArtifact.model_validate_json(design_json)
 
-    design = _design_analyzer.analyze(
-        requirements,
-        previous_design=previous_design,
-        refinement_input=user_input,
+    design = run_sync(
+        _design_analyzer.execute(
+            requirements,
+            previous_design=previous_design,
+            refinement_input=user_input,
+        ),
+        caller="refine_architecture",
     )
 
     return design.model_dump_json(indent=2)

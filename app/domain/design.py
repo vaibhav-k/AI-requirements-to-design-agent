@@ -1,3 +1,27 @@
+"""The architecture/design bounded context's entities.
+
+Moved here, verbatim, from the former ``app/design/models.py`` as part
+of the Clean Architecture migration (see README -> "Clean Architecture
+Migration") — the same "pure entity, zero I/O" home
+``app.domain.requirements`` already gives the requirements bounded
+context's entities. Nothing here depends on Pydantic beyond what every
+other domain module already accepts as a shared-kernel dependency (see
+``app/domain/__init__.py``).
+
+``app/design/models.py`` used to be a deprecated re-export shim over
+this module, the same "strangler fig" shape ``app/models.py`` used for
+``app.domain.requirements`` — it has since been deleted (see README ->
+"Clean Architecture Migration" -> the slice that migrated every
+remaining importer off both shims). Every module that used to import
+``SystemDesignArtifact`` and friends from ``app.design.models``
+(``app/design/analyzer.py``, ``app/design/validator.py``,
+``app/design/diagram.py``, ``app/design/comparison.py``,
+``app/design/session.py``, the API routes, the MCP server,
+``app/main.py``, ``app/infrastructure/session_store.py``,
+``app/vision.py``, and all of ``tests/``) now imports directly from
+here.
+"""
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field

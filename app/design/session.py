@@ -1,39 +1,20 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Protocol
 
-from ..models import RequirementsArtifact
-from .analyzer import SystemDesignAnalyzer
-from .diagram import ArchitectureDiagramGenerator
-from .models import SystemDesignArtifact
+from app.application.ports import ArtifactStorePort, DiagramRendererPort
+from app.application.use_cases.generate_system_design import (
+    GenerateSystemDesignUseCase,
+)
+from app.domain.design import SystemDesignArtifact
+from app.domain.requirements import RequirementsArtifact
+from app.infrastructure.sync_bridge import run_sync
+
 from .validator import ArchitectureValidationError, ArchitectureValidator
 
 
 class DesignGenerationWorkflowError(RuntimeError):
     """Raised when the architecture generation workflow fails."""
-
-
-class DesignStore(Protocol):
-    """Storage interface required by the design session."""
-
-    def save_design_json(
-        self,
-        session_id: str,
-        version: int,
-        content: str,
-    ) -> str:
-        """Persist a system design JSON document."""
-        ...
-
-    def save_design_svg(
-        self,
-        session_id: str,
-        version: int,
-        content: str,
-    ) -> str:
-        """Persist an architecture diagram SVG document."""
-        ...
 
 
 class DesignSessionResult:
@@ -64,10 +45,10 @@ class ArchitectureSession:
 
     def __init__(
         self,
-        analyzer: SystemDesignAnalyzer,
-        diagram_generator: ArchitectureDiagramGenerator,
+        analyzer: GenerateSystemDesignUseCase,
+        diagram_generator: DiagramRendererPort,
         validator: ArchitectureValidator,
-        store: DesignStore,
+        store: ArtifactStorePort,
         session_id: str,
         version: int = 0,
     ) -> None:
@@ -95,17 +76,27 @@ class ArchitectureSession:
 
         Passing ``previous_design``/``refinement_input`` refines that design
         in place instead of generating a fresh one — see
-        ``SystemDesignAnalyzer.analyze``. The validate/render/persist tail
-        of this is shared with :meth:`generate_from_design` (see there for
-        the image-diagram entry point that skips straight past this
+        ``GenerateSystemDesignUseCase.execute``. The validate/render/persist
+        tail of this is shared with :meth:`generate_from_design` (see there
+        for the image-diagram entry point that skips straight past this
         text-based analysis step).
+
+        Synchronous on purpose — the CLI (``app/main.py``) and the sync
+        FastAPI routes that construct this session call it directly with
+        no event loop of their own; ``run_sync`` (see
+        ``app/infrastructure/sync_bridge.py``) bridges into
+        ``self.analyzer.execute``'s async call, the same guard the former
+        ``SystemDesignAnalyzer.analyze`` facade used to provide.
         """
 
         try:
-            design: SystemDesignArtifact = self.analyzer.analyze(
-                requirements,
-                previous_design=previous_design,
-                refinement_input=refinement_input,
+            design: SystemDesignArtifact = run_sync(
+                self.analyzer.execute(
+                    requirements,
+                    previous_design=previous_design,
+                    refinement_input=refinement_input,
+                ),
+                caller="ArchitectureSession.generate",
             )
         except Exception as exc:
             raise DesignGenerationWorkflowError(

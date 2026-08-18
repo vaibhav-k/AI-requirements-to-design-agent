@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from app.application.errors import DesignGenerationError
-from app.design.models import SystemDesignArtifact
+from app.domain.design import SystemDesignArtifact
 from app.domain.requirements import RequirementsArtifact
 from app.infrastructure.agents.system_design_agent import (
     AgentFrameworkSystemDesignAgent,

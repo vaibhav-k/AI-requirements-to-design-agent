@@ -18,7 +18,7 @@ from agent_framework import ChatOptions
 from agent_framework.openai import OpenAIChatClient
 
 from app.application.errors import DesignGenerationError
-from app.design.models import SystemDesignArtifact
+from app.domain.design import SystemDesignArtifact
 from app.domain.requirements import RequirementsArtifact
 
 _INSTRUCTIONS = (

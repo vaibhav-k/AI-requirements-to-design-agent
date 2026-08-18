@@ -1,5 +1,5 @@
 from app.design.comparison import compare_architectures
-from app.design.models import (
+from app.domain.design import (
     DesignAssumption,
     DesignComponent,
     DesignInterface,

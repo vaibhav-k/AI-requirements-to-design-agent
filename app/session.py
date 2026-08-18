@@ -3,12 +3,13 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from .analyzer import RequirementsAnalyzer
-from .models import (
+from app.application.ports import ArtifactStorePort
+from app.application.use_cases.analyze_requirements import AnalyzeRequirementsUseCase
+from app.domain.requirements import (
     RequirementsArtifact,
     StoredArtifact,
 )
-from .storage import ArtifactStore
+from app.infrastructure.sync_bridge import run_sync
 
 
 class DesignSession:
@@ -16,8 +17,8 @@ class DesignSession:
 
     def __init__(
         self,
-        analyzer: RequirementsAnalyzer,
-        store: ArtifactStore,
+        analyzer: AnalyzeRequirementsUseCase,
+        store: ArtifactStorePort,
     ) -> None:
         self.session_id = str(uuid.uuid4())
 
@@ -35,9 +36,12 @@ class DesignSession:
 
         self.version += 1
 
-        artifact = self.analyzer.analyze(
-            user_input=user_input,
-            previous_artifact=self.current_artifact,
+        artifact = run_sync(
+            self.analyzer.execute(
+                user_input=user_input,
+                previous_artifact=self.current_artifact,
+            ),
+            caller="DesignSession.analyze",
         )
 
         self.current_artifact = artifact

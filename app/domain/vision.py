@@ -4,7 +4,7 @@ See ``app/vision.py``'s module docstring for the wider story this
 belongs to: an uploaded image is either a screenshot of text (handled by
 the normal requirements/OCR pipeline) or a system design/workflow
 diagram (interpreted directly into a ``SystemDesignArtifact`` — see
-``app.design.models``, not yet moved into this package — via
+``app.domain.design`` — via
 ``app.application.ports.DiagramImageInterpreterPort``).
 
 Moved here, verbatim, from ``app/vision.py`` as part of the Clean

@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from app.application.errors import DiagramInterpretationError
-from app.design.models import SystemDesignArtifact
+from app.domain.design import SystemDesignArtifact
 from app.infrastructure.agents.diagram_image_interpreter_agent import (
     AgentFrameworkDiagramImageInterpreterAgent,
     _build_prompt,

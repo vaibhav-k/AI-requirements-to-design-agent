@@ -17,16 +17,25 @@ MVP-3 Completion" (just below it) for concrete next steps on each
 remaining item.
 
 Separately from the MVP feature roadmap, a **Clean Architecture
-migration is in progress** (Slices 1–2 of 8, done): the codebase is
-being re-layered into Domain / Application / Infrastructure /
-Presentation, and both the requirements-analysis and system-design-
-generation LLM calls now run on [Microsoft Agent
+migration is now complete** (all 8 of 8 slices done): the codebase has
+been re-layered into Domain / Application / Infrastructure /
+Presentation, requirements-analysis/system-design-generation/image-
+classification/diagram-interpretation all now run on [Microsoft Agent
 Framework](https://github.com/microsoft/agent-framework) instead of a
-direct Azure OpenAI SDK call. This is an architecture/tech initiative
-orthogonal to the MVP roadmap above — it doesn't add or change
-user-facing capability, and doesn't block MVP-3 work landing in
-parallel. See "Clean Architecture Migration" under "Next Steps" for the
-full plan, what each slice did, and what's left.
+direct Azure OpenAI SDK call, every one of the three "strangler fig"
+facade modules (`app/analyzer.py`, `app/design/analyzer.py`,
+`app/vision.py`) that used to bridge old call sites onto that new code
+has been deleted, requirements/design/session persistence sits behind
+`ArtifactStorePort`/`SessionStorePort` (`app/application/ports.py`)
+rather than every layer above storage depending on the concrete Blob/
+Cosmos adapter classes directly, and architecture diagram rendering
+sits behind `DiagramRendererPort` rather than
+`app.design.session.ArchitectureSession` and its callers depending on
+`ArchitectureDiagramGenerator`/Graphviz directly. This was an
+architecture/tech initiative orthogonal to the MVP roadmap above — it
+didn't add or change user-facing capability, and didn't block MVP-3
+work landing in parallel. See "Clean Architecture Migration" under
+"Next Steps" for the full plan and what each slice did.
 
 Capabilities implemented so far:
 
@@ -156,13 +165,16 @@ architecture pipeline, secured with Entra ID (Azure AD).
   * `current_claims` / `current_user_key` / `principal_of` — read the
     validated claims back out inside a route (`oid` is the stable id to key
     ownership off of).
-* `app/infrastructure/session_store.py` — a `SessionRecord` (the web
-  equivalent of the CLI's in-memory `DesignSession`/`ArchitectureSession`
-  state) persisted in Cosmos DB via `CosmosSessionStore`. This store is
+* `app/infrastructure/session_store.py` — a `SessionRecord`
+  (`app/domain/session.py`; the web equivalent of the CLI's in-memory
+  `DesignSession`/`ArchitectureSession` state) persisted in Cosmos DB via
+  `CosmosSessionStore`, the concrete
+  `app.application.ports.SessionStorePort` implementation. This store is
   **synchronous** (`azure.cosmos.CosmosClient`, not the `.aio` client) to
-  match the rest of this project — `ArtifactStore` and both analyzers are
-  synchronous too — so the routes that use it are plain `def`, not
-  `async def`, and FastAPI runs them in a threadpool.
+  match the rest of this project — `app/infrastructure/artifact_store.py`'s
+  `ArtifactStore` and every use case are synchronous or sync-bridged too —
+  so the routes that use it are plain `def`, not `async def`, and FastAPI
+  runs them in a threadpool.
 * `app/api/ownership.py` — per-user authorization for session records: a
   session is stamped with the Entra `oid` of whoever started it, and any
   request for a session that is missing *or* belongs to someone else gets
@@ -177,7 +189,7 @@ architecture pipeline, secured with Entra ID (Azure AD).
   * `POST /requirements-runs` — analyze the initial input, like the CLI's
     first `analyze()` call. Creates a session.
   * `GET /requirements-runs` — list the caller's own sessions, newest
-    first (`SessionStore.list_for_owner`). Returns `[]` for an anonymous
+    first (`SessionStorePort.list_for_owner`). Returns `[]` for an anonymous
     caller (or with `AUTH_ENABLED=false`) rather than every session anyone
     has ever created.
   * `GET /requirements-runs/{id}` — fetch the current state of a session
@@ -195,7 +207,7 @@ architecture pipeline, secured with Entra ID (Azure AD).
     its `error` field is set.
   * `POST /requirements-runs/{id}/refine-architecture` — the architecture
     analogue of `refine`: bumps `design_version` and re-generates with the
-    previous design as context (`SystemDesignAnalyzer.analyze`'s
+    previous design as context (`GenerateSystemDesignUseCase.execute`'s
     `previous_design`/`refinement_input`), preserving components,
     interfaces, and external dependencies that are still valid rather than
     regenerating from scratch. Unlike `refine`, this is only valid *after*
@@ -848,7 +860,7 @@ not a browser sign-in redirect.
   earlier revision of this README (and the MVP-2 checklist) had claimed
   this was already done when it wasn't; it's genuinely done now.
 * ~~`GET /requirements-runs` — list a caller's own sessions~~ — implemented
-  via `SessionStore.list_for_owner`, a cross-partition `owner_oid`-filtered
+  via `SessionStorePort.list_for_owner`, a cross-partition `owner_oid`-filtered
   Cosmos query (sessions are partitioned by their own id, not by owner —
   see the partition-key reasoning earlier in this doc). Returns `[]` for an
   anonymous caller rather than every session anyone has ever created.
@@ -892,7 +904,7 @@ not a browser sign-in redirect.
    structured logs, no Application Insights — fine for one developer
    testing locally, not fine for anything with real traffic.
 5. **Reconcile the CLI and web session models.** `app/session.py`'s
-   `DesignSession` and `app/infrastructure/session_store.py`'s
+   `DesignSession` and `app/domain/session.py`'s
    `SessionRecord` model largely the same lifecycle in parallel, with no
    shared code between them. That's been fine while they're this simple,
    but every future field (see items above) has to be added twice unless
@@ -996,18 +1008,37 @@ The architecture validator runs before an architecture is persisted. Invalid arc
 
 The architecture diagram represents both internal components and explicitly modeled external dependencies.
 
-The diagram above already reflects the first three slices of an
-in-progress architectural migration — see "Clean Architecture
-Migration" (in "Next Steps," below "Roadmap") for the full plan,
-rationale, and what's left. In short: requirements analysis,
-system-design generation, and image classification/diagram-image
-interpretation (`app/vision.py`) all now run on Microsoft Agent
-Framework instead of a direct Azure OpenAI SDK call, and the code
-behind each is now layered as Domain → Application → Infrastructure
-rather than one flat module apiece. The Architecture Validator and
-Diagram Generator boxes are unchanged so far — moving
-`app/design/models.py` into `app/domain/` is next in line, followed by
-the diagram generator itself becoming a port.
+The diagram above already reflects all eight slices of what is now a
+completed architectural migration — see "Clean Architecture Migration"
+(in "Next Steps," below "Roadmap") for the full plan, rationale, and
+what each slice did. In short: requirements analysis, system-design
+generation, and image classification/diagram-image interpretation all
+now run on Microsoft Agent Framework instead of a direct Azure OpenAI
+SDK call, the code behind each is now layered as Domain → Application →
+Infrastructure rather than one flat module apiece, the architecture/
+design bounded context's entities (`SystemDesignArtifact` and friends)
+live in `app/domain/design.py` alongside the requirements bounded
+context's `app/domain/requirements.py` and the run entity in
+`app/domain/session.py`, all five re-export/facade shims that used to
+bridge old call sites onto that new code
+(`app/models.py`/`app/design/models.py`/`app/analyzer.py`/
+`app/design/analyzer.py`/`app/vision.py`) have been deleted — every
+call site now either imports the domain entities directly or
+constructs its use case via `app/infrastructure/composition.py` (see
+`app/api/dependencies.py`, `app/mcp/server.py`, `app/main.py`) —
+requirements/design/session persistence sits behind
+`ArtifactStorePort`/`SessionStorePort` rather than every layer above
+storage depending on the concrete Blob (`app/infrastructure
+/artifact_store.py`) / Cosmos (`app/infrastructure/session_store.py`)
+adapter classes directly, and the Diagram Generator box now sits
+behind `DiagramRendererPort` rather than
+`app.design.session.ArchitectureSession` and its callers (`app/main.py`,
+`app/api/dependencies.py`, `app/mcp/server.py`) depending on
+`ArchitectureDiagramGenerator`/Graphviz directly. The Architecture
+Validator box remains a plain concrete dependency, not behind a port —
+it's pure in-process validation logic with no external service or
+library it needs to be abstracted away from, unlike every other box
+this migration touched.
 
 ---
 
@@ -1017,25 +1048,27 @@ the diagram generator itself becoming a port.
 requirements-agent/
 ├── app/
 │   ├── main.py
-│   ├── models.py         # DEPRECATED shim — re-exports app/domain/requirements.py
-│   ├── analyzer.py        # DEPRECATED sync facade — see "Clean Architecture Migration"
 │   ├── session.py
-│   ├── storage.py
 │   ├── config.py
 │   ├── ingestion.py
-│   ├── vision.py          # DEPRECATED sync facade — see "Clean Architecture Migration"
 │   │
 │   ├── domain/                       # Clean Architecture: entities, zero I/O
 │   │   ├── __init__.py
 │   │   ├── requirements.py           # Requirement/Actor/.../RequirementsArtifact
-│   │   └── vision.py                 # ImageClassification
+│   │   ├── design.py                 # DesignComponent/.../SystemDesignArtifact
+│   │   ├── vision.py                 # ImageClassification
+│   │   └── session.py                # SessionRecord
 │   │
 │   ├── application/                  # Clean Architecture: use cases + ports
 │   │   ├── __init__.py
 │   │   ├── ports.py                  # RequirementsAgentPort/SystemDesignAgentPort/
-│   │   │                             # ImageClassifierPort/DiagramImageInterpreterPort
+│   │   │                             # ImageClassifierPort/DiagramImageInterpreterPort/
+│   │   │                             # ArtifactStorePort/SessionStorePort/
+│   │   │                             # DiagramRendererPort
 │   │   ├── errors.py                 # DesignGenerationError/ImageClassificationError/
-│   │   │                             # DiagramInterpretationError
+│   │   │                             # DiagramInterpretationError/
+│   │   │                             # ArtifactVersionConflict/SessionConflictError/
+│   │   │                             # DiagramGenerationError
 │   │   └── use_cases/
 │   │       ├── __init__.py
 │   │       ├── analyze_requirements.py
@@ -1045,10 +1078,9 @@ requirements-agent/
 │   │
 │   ├── design/
 │   │   ├── __init__.py
-│   │   ├── models.py
-│   │   ├── analyzer.py    # DEPRECATED sync facade — see "Clean Architecture Migration"
 │   │   ├── validator.py
-│   │   ├── diagram.py
+│   │   ├── diagram.py                # ArchitectureDiagramGenerator — concrete
+│   │   │                             # DiagramRendererPort
 │   │   ├── comparison.py
 │   │   ├── icons.py
 │   │   ├── icons/
@@ -1067,7 +1099,14 @@ requirements-agent/
 │   │
 │   ├── infrastructure/
 │   │   ├── __init__.py
-│   │   ├── session_store.py
+│   │   ├── session_store.py   # CosmosSessionStore — concrete SessionStorePort
+│   │   ├── artifact_store.py  # ArtifactStore — concrete ArtifactStorePort
+│   │   ├── composition.py   # composition root — builds each *UseCase
+│   │   │                    # wired to a real Microsoft Agent Framework
+│   │   │                    # adapter, reading AZURE_OPENAI_* once here
+│   │   ├── sync_bridge.py   # run_sync() — bridges a use case's async
+│   │   │                    # execute() into a sync call for the CLI/MCP/
+│   │   │                    # sync FastAPI routes
 │   │   └── agents/
 │   │       ├── __init__.py
 │   │       ├── requirements_agent.py    # Microsoft Agent Framework adapter
@@ -1121,21 +1160,19 @@ requirements-agent/
 │   └── get_dev_token.py
 │
 ├── tests/
-│   ├── test_analyzer.py
 │   ├── test_analyze_requirements_use_case.py
 │   ├── test_infrastructure_requirements_agent.py
-│   ├── test_storage.py
+│   ├── test_artifact_store.py
 │   ├── test_refinement.py
 │   ├── test_ingestion.py
-│   ├── test_design_analyzer.py
 │   ├── test_generate_system_design_use_case.py
 │   ├── test_infrastructure_system_design_agent.py
-│   ├── test_vision.py
 │   ├── test_classify_image_use_case.py
 │   ├── test_interpret_diagram_image_use_case.py
 │   ├── test_infrastructure_image_classifier_agent.py
 │   ├── test_infrastructure_diagram_image_interpreter_agent.py
 │   ├── test_infrastructure_vision_support.py
+│   ├── test_infrastructure_sync_bridge.py
 │   ├── test_design_validator.py
 │   ├── test_design_diagram.py
 │   ├── test_design_storage.py
@@ -1219,7 +1256,7 @@ Requirements
 A dedicated architecture validation layer was added between AI generation and persistence.
 
 ```text
-SystemDesignAnalyzer
+GenerateSystemDesignUseCase
         │
         ▼
 SystemDesignArtifact
@@ -1396,7 +1433,7 @@ Example:
 ```text
 User input
     ↓
-RequirementsAnalyzer
+AnalyzeRequirementsUseCase
     ↓
 RequirementsArtifact
     ↓
@@ -1417,7 +1454,7 @@ MVP-2 consumes an accepted requirements artifact and generates a high-level syst
 RequirementsArtifact
         │
         ▼
-SystemDesignAnalyzer
+GenerateSystemDesignUseCase
         │
         ▼
 SystemDesignArtifact
@@ -1638,7 +1675,8 @@ also provides a foundation for:
 * Future approval workflows
 * Architecture change tracking
 
-Every save goes through `ArtifactStore._upload` (`app/storage.py`), which
+Every save goes through `ArtifactStore._upload`
+(`app/infrastructure/artifact_store.py`), which
 logs the resulting blob path after a successful upload — one `logger.info`
 call covers every artifact type (requirements JSON, design JSON, diagram
 SVG, uploaded source files) since they all funnel through this one method:
@@ -1925,7 +1963,7 @@ outside it):
 
 This layer is deliberately stateless — every tool takes and returns JSON
 directly, with no session, persistence, or versioning of its own (that's
-`ArtifactStore`/`SessionStore`'s job on the web API side). The MCP adapter
+`ArtifactStorePort`/`SessionStorePort`'s job on the web API side). The MCP adapter
 can subsequently be extended with additional tools for:
 
 * Artifact retrieval — reading already-persisted versions (mirroring
@@ -2198,7 +2236,7 @@ history are independent and can slot in anywhere once the others land):
    Tool Expansion" section below that has no other blocker).
 3. **Architecture Decision Records** (see "Next Steps" → "Architecture
    Decision Records" below). Concretely: add an `ArchitectureDecisionRecord`
-   Pydantic model (`app/design/models.py`), persist it the same way as
+   Pydantic model (`app/domain/design.py`), persist it the same way as
    other artifacts (`ArtifactStore.save_adr`/`get_adr`, versioned per
    session like design JSON/SVG), and add
    `POST`/`GET /requirements-runs/{id}/architecture/decisions` routes.
@@ -2328,9 +2366,9 @@ The next development phase should focus on moving from **MVP-2 architecture gene
 
 ## Clean Architecture Migration
 
-**In progress — Slices 1–3 of 8 done.** A separate, ongoing initiative (not part
-of the MVP-3 feature checklist above) to re-layer the backend as Clean
-Architecture and move the project's AI calls onto [Microsoft Agent
+**Complete — 8 of 8 slices done.** A separate initiative (not part
+of the MVP-3 feature checklist above) that re-layered the backend as Clean
+Architecture and moved the project's AI calls onto [Microsoft Agent
 Framework](https://github.com/microsoft/agent-framework) — Microsoft's
 unified successor to Semantic Kernel and AutoGen, combining Semantic
 Kernel's enterprise features (typed, session-based state; middleware;
@@ -2370,9 +2408,11 @@ app/main.py, app/mcp/  MCP server — construct use cases (wired to real
 
 * `app/domain/requirements.py` — `Requirement`, `Actor`, `Assumption`,
   `OpenQuestion`, `RequirementsArtifact`, `StoredArtifact`, moved out of
-  `app/models.py` verbatim. `app/models.py` is now a deprecated
-  re-export shim (still used by most of the codebase — see below) so
-  this slice didn't require updating every importer at once.
+  `app/models.py` verbatim. `app/models.py` became a deprecated
+  re-export shim at this point (still used by most of the codebase at
+  the time) so this slice didn't require updating every importer at
+  once — that migration happened in a later slice (see Slice 5 below),
+  and `app/models.py` no longer exists.
 * `app/application/ports.py` — `RequirementsAgentPort`, a `Protocol`
   with one method (`analyze`). `app/application/use_cases
   /analyze_requirements.py` — `AnalyzeRequirementsUseCase`, pure
@@ -2418,10 +2458,11 @@ app/main.py, app/mcp/  MCP server — construct use cases (wired to real
 
 * `app/application/ports.py` gained `SystemDesignAgentPort` (method
   `generate`), the design-generation analogue of `RequirementsAgentPort`.
-  Its `SystemDesignArtifact` parameter/return type still comes from
-  `app.design.models` rather than `app.domain` — that move is its own
-  remaining slice (see below) — documented inline in `ports.py` as a
-  deliberate, temporary compromise rather than an oversight.
+  Its `SystemDesignArtifact` parameter/return type came from
+  `app.design.models` rather than `app.domain` at this point — documented
+  inline in `ports.py` as a deliberate, temporary compromise rather than
+  an oversight, resolved two slices later once `app.domain.design`
+  existed (see Slice 4 below).
 * `app/application/errors.py` (new) — `DesignGenerationError`, moved
   out of `app/design/analyzer.py` so both the application and
   infrastructure layers can raise/import it without a circular
@@ -2513,55 +2554,312 @@ end to end:**
   `fakes()` fixture updated to wire `classify_async`/`interpret_async`
   the same way it already wired `analyze_async` in Slice 1.
 
+**Slice 4 (done) — Move `app/design/models.py` into `app/domain/`:**
+
+* `app/domain/design.py` (new) — `DesignComponent`, `DesignInterface`,
+  `ExternalDependency`, `DesignAssumption`, `DesignQuestion`,
+  `SystemDesignArtifact`, `ApprovalDecision`, moved out of
+  `app/design/models.py` verbatim — the architecture/design bounded
+  context's own home, alongside Slice 1's
+  `app.domain.requirements`. `app/design/models.py` became a deprecated
+  re-export shim at this point, the same "strangler fig" shape
+  `app/models.py` used for `app.domain.requirements` — every existing
+  importer kept working unchanged without needing to change in this
+  same slice.
+* `app/application/ports.py`, `app/application/use_cases
+  /generate_system_design.py`, `app/application/use_cases
+  /interpret_diagram_image.py`, `app/infrastructure/agents
+  /system_design_agent.py`, and `app/infrastructure/agents
+  /diagram_image_interpreter_agent.py` — the five application/
+  infrastructure-layer modules introduced by Slices 2–3 that needed
+  `SystemDesignArtifact` — started importing it from `app.domain.design`
+  directly instead of through the `app.design.models` shim at this
+  point, resolving `ports.py`'s previous "deliberate, temporary
+  compromise" comment (importing a not-yet-domain module from the
+  application layer). No other importer was touched in this slice —
+  updating every remaining call site happened in Slice 5 below.
+* No test or behavior changes: this slice was a pure move-plus-shim, and
+  the existing suite already covered it transitively.
+
+**Slice 5 (done) — Migrate every remaining importer off `app/models.py`
+and `app/design/models.py`, then delete both shims:**
+
+* Every one of the ~20 remaining importers of `app.models`/
+  `app.design.models` — `app/api/routes/artifacts.py`,
+  `app/api/routes/requirements.py`, `app/design/analyzer.py`,
+  `app/design/comparison.py`, `app/design/diagram.py`,
+  `app/design/session.py`, `app/design/validator.py`,
+  `app/infrastructure/session_store.py`, `app/main.py`,
+  `app/mcp/server.py`, `app/session.py`, `app/storage.py`,
+  `app/vision.py`, and every test file that imported either shim —
+  switched to importing `RequirementsArtifact`/`StoredArtifact`
+  directly from `app.domain.requirements` and
+  `SystemDesignArtifact`/`DesignComponent`/etc. directly from
+  `app.domain.design`. Two importers used relative imports
+  (`app/design/session.py`'s `from ..models import ...`/
+  `from .models import ...` and `app/session.py`'s `from .models
+  import ...`) rather than the absolute `from app.models import ...`
+  form the rest of the codebase used — easy to miss with a naive
+  text search, caught by actually running the test suite after the
+  shims were deleted (`ModuleNotFoundError: No module named
+  'app.models'`) rather than trusting the grep alone.
+* `app/models.py` and `app/design/models.py` — deleted. Every entity
+  either module ever defined now has exactly one home
+  (`app.domain.requirements` or `app.domain.design`), with no
+  re-export indirection left anywhere in the codebase.
+* No behavior change — this was a mechanical import-path migration.
+  Every existing test kept its own assertions unchanged; only their
+  `import` lines moved. `python3 -m ruff check --select I --fix .` was
+  run once at the end to re-sort import blocks disturbed by the module
+  path change, rather than hand-fixing each file's import ordering.
+* Verified the shims were actually gone from every layer, not just
+  "probably fine": grepped for `app.models`/`app.design.models` (and
+  their relative-import spellings) across `app/` and `tests/` after
+  the edits, found zero remaining references outside historical
+  docstring mentions (`app/domain/requirements.py`/`app/domain
+  /design.py` note, in past tense, that the shims used to exist), then
+  ran the full `pytest`/`ruff`/`mypy --strict`/`pyright` suite clean.
+
+**Slice 6 (done) — Migrate `app/analyzer.py`/`app/design/analyzer.py`/
+`app/vision.py`'s call sites onto their use cases directly, then delete
+all three facade modules:**
+
+* `app/infrastructure/composition.py` (new) — the composition root each
+  facade's own `__init__` used to be. Four functions
+  (`build_requirements_use_case`/`build_system_design_use_case`/
+  `build_image_classifier_use_case`/`build_diagram_interpreter_use_case`),
+  each reading `AZURE_OPENAI_API_KEY`/`AZURE_OPENAI_ENDPOINT`/
+  `AZURE_OPENAI_MODEL` from the environment (via the same
+  "require this var or raise" helper, defined once instead of copy-pasted
+  three times across the old facades) and returning a ready-to-use
+  `AnalyzeRequirementsUseCase`/`GenerateSystemDesignUseCase`/
+  `ClassifyImageUseCase`/`InterpretDiagramImageUseCase` wired to a real
+  `AgentFrameworkXAgent` adapter. `app/api/dependencies.py`,
+  `app/mcp/server.py`, and `app/main.py` each call into this module now
+  instead of constructing a facade class.
+* `app/infrastructure/sync_bridge.py` (new) — `run_sync(coro, *,
+  caller)`, the one remaining piece every facade duplicated: the
+  `asyncio.get_running_loop()` guard (raising a clear `RuntimeError`
+  instead of `asyncio.run()`'s confusing nested-loop crash) plus the
+  `asyncio.run(...)` call itself. Every use case now exposes exactly one
+  method, async `execute(...)` — no more sync/async method pairs to keep
+  in sync per facade — and a caller that isn't itself `async` reaches it
+  through this one bridge function instead.
+* `app/session.py`'s `DesignSession` and `app/design/session.py`'s
+  `ArchitectureSession` — previously typed against the facade classes
+  (`RequirementsAnalyzer`/`SystemDesignAnalyzer`) — now type against
+  `AnalyzeRequirementsUseCase`/`GenerateSystemDesignUseCase` directly,
+  and their own `analyze()`/`generate()` methods (still synchronous, by
+  design — the CLI and the sync FastAPI routes that construct them have
+  no event loop of their own) call the use case's `execute()` through
+  `run_sync` internally instead of a facade's own `analyze()`.
+* `app/api/dependencies.py` — `get_requirements_analyzer`/
+  `get_design_analyzer`/`get_image_classifier`/`get_diagram_interpreter`
+  keep their names (so `app.dependency_overrides` call sites in tests
+  didn't need to change) but now return the real use case, built by
+  `app.infrastructure.composition`, instead of constructing a facade.
+  `ArchitectureGenerationDependencies`/`RequirementsUploadDependencies`/
+  `ImageUploadDependencies` retyped their analyzer/classifier/interpreter
+  fields to the corresponding use case type.
+* `app/api/routes/requirements.py` — the two sync routes (`start_run`/
+  `refine_run`) now call `run_sync(analyzer.execute(...), caller=...)`
+  instead of the facade's sync `analyze()`; the already-`async def`
+  routes/helpers (`start_run_from_upload`/`refine_run_from_upload`/
+  `_resolve_image_upload`) now `await analyzer.execute(...)` /
+  `await classifier.execute(...)` / `await diagram_interpreter.execute(
+  ...)` directly instead of the facades' `..._async` methods.
+  `accept_run`/`refine_architecture` needed no change beyond the
+  dependency's new type — they already just passed `deps.analyzer`
+  through to `ArchitectureSession`, which does its own sync-bridging
+  internally.
+* `app/mcp/server.py` — its module-level `_requirements_analyzer`/
+  `_design_analyzer` singletons are now built by
+  `app.infrastructure.composition` instead of constructing a facade
+  directly, and every tool function calls `run_sync(..._analyzer.execute(
+  ...), caller=...)` instead of the facade's sync `analyze()`.
+* `DesignGenerationError`/`ImageClassificationError`/
+  `DiagramInterpretationError`/`ImageClassification` — every importer
+  that used to pull these off the facade modules' re-exports
+  (`app/design/analyzer.py`'s `__all__`, `app/vision.py`'s `__all__`)
+  now imports them from their real homes,
+  `app.application.errors`/`app.domain.vision`, directly.
+* `app/analyzer.py`, `app/design/analyzer.py`, and `app/vision.py` —
+  deleted. Every call site now depends on `app.application.use_cases.*`
+  + `app.infrastructure.composition` instead of a facade.
+* Tests: `tests/test_analyzer.py`, `tests/test_design_analyzer.py`, and
+  `tests/test_vision.py` were deleted rather than updated — each only
+  exercised the deleted facade's own sync/async-bridging behavior around
+  a fake port, which `tests/test_analyze_requirements_use_case.py`/
+  `tests/test_generate_system_design_use_case.py`/
+  `tests/test_classify_image_use_case.py`/
+  `tests/test_interpret_diagram_image_use_case.py` already cover at the
+  use-case level. The sync-bridging behavior itself moved to
+  `tests/test_infrastructure_sync_bridge.py` (new) — `run_sync`'s
+  happy path and its running-event-loop guard, tested once instead of
+  once per facade. `tests/test_refinement.py` and `tests/test_mcp.py`
+  were updated in place (mock/fake `.analyze`/`._use_case.agent` access
+  renamed to `.execute`/`.agent`) since they test real collaborators
+  (`DesignSession`, the MCP tool functions) that still exist.
+  `tests/test_requirements_routes.py`'s and `tests/test_rbac.py`'s
+  `fakes()` fixtures collapsed each service's `.analyze`/`.analyze_async`
+  (or `.classify`/`.classify_async`, `.interpret`/`.interpret_async`)
+  mock-method pair down to a single `AsyncMock`-backed `.execute` — every
+  test that configured `.analyze.return_value`/`.side_effect` etc. was
+  updated to configure `.execute` instead (mechanical rename, no
+  assertion logic changed, since the parameter names on `execute` match
+  the old `analyze`/`classify`/`interpret` methods exactly).
+* Verified with the same rigor as Slice 5: grepped for
+  `app.analyzer`/`app.design.analyzer`/`app.vision` (and relative-import
+  spellings) across `app/` and `tests/` after the edits, confirmed the
+  only remaining hits are historical, past-tense docstring/comment
+  mentions (e.g. `app/infrastructure/agents/vision_support.py` noting
+  what `app.vision._data_url` used to do), then ran the full
+  `pytest`/`ruff`/`mypy --strict`/`pyright` suite clean.
+
 **What's temporarily duplicated/deprecated on purpose** (strangler fig,
-not sloppiness — each will be removed in a later slice once nothing
-imports the old path):
+not sloppiness — each would have been removed in a later slice once
+nothing imported the old path): nothing, as of Slice 6 — the last three
+facade modules (`app/analyzer.py`, `app/design/analyzer.py`,
+`app/vision.py`) were deleted in that slice. Slices 7 and 8 were pure
+new-abstraction work (ports for storage/diagram rendering), not
+strangler-fig cleanup.
 
-* `app/models.py` — re-exports `app.domain.requirements`. Still
-  imported by `app/storage.py`, `app/api/routes/requirements.py`,
-  `app/mcp/server.py`, `app/session.py`, and most of `tests/`.
-* `app/analyzer.py` — the requirements-analysis sync/async facade. Still
-  imported by every requirements-analysis call site.
-* `app/design/analyzer.py` — the design-generation sync/async facade.
-  Still imported by every design-generation call site.
-* `app/vision.py` — the image-classification/diagram-interpretation
-  sync/async facades. Still imported by `app/api/dependencies.py`.
+**Slice 7 (done) — Ports + adapters for storage:**
 
-**Remaining slices**, each a bounded vertical slice like Slices 1–3 (a 
-capability moved through all four layers, tests updated, README kept
-current — not a scattershot refactor):
+* `app/application/ports.py` gained `ArtifactStorePort` (every method
+  `app/infrastructure/artifact_store.py`'s `ArtifactStore` exposes:
+  `save`, the requirements/design version listing and JSON/SVG getters,
+  `save_design_json`/`save_design_svg`, both `delete_design_*` methods,
+  `save_source_file`/`get_source_file`, and `close`) and
+  `SessionStorePort` (`create`/`get`/`upsert`/`list_for_owner`/`list_all`
+  — the same shape the `SessionStore` `Protocol` that used to live in
+  `app/infrastructure/session_store.py` already had, moved rather than
+  redesigned). Both are synchronous, like every other port so far —
+  nothing in this project's call sites needs an async storage call badly
+  enough to justify it, and both concrete adapters already wrap
+  synchronous SDKs.
+* `app/domain/session.py` (new) — `SessionRecord`, moved out of
+  `app/infrastructure/session_store.py` verbatim. One honest compromise
+  documented inline rather than hidden: `SessionRecord.etag` (a Cosmos
+  optimistic-concurrency token) and `to_item()` (a Cosmos document
+  serializer) are infrastructure-flavored fields on an otherwise-pure
+  domain entity. They stayed rather than being split into a separate
+  infrastructure-only wrapper type, because splitting them would mean
+  either every route also imports an infrastructure-only type just to
+  thread a value it never reads, or `SessionStorePort` doing that
+  threading itself — neither reads as clearer than accepting one
+  concurrency-token field as domain-adjacent plumbing (see the module's
+  own docstring for the fuller version of this reasoning).
+* `app/application/errors.py` gained `ArtifactVersionConflict` (moved out
+  of `app/storage.py`) and `SessionConflictError` (moved out of
+  `app/infrastructure/session_store.py`), the same "error types live in
+  `app.application`, not on the infrastructure module that used to raise
+  them" pattern every prior slice's error types already followed.
+* `app/storage.py` moved, verbatim aside from its imports, to
+  `app/infrastructure/artifact_store.py` — `ArtifactStore` is now the
+  concrete `ArtifactStorePort` implementation, sitting next to
+  `app/infrastructure/session_store.py`'s `CosmosSessionStore` (the
+  concrete `SessionStorePort` implementation) rather than at the top
+  level of `app/`. `app/infrastructure/session_store.py` itself shrank to
+  just `CosmosSessionStore` — its module docstring explains why the
+  entity and port/error types it used to define all moved out.
+* Every presentation-layer call site that used to type a parameter as
+  the concrete `ArtifactStore`/`SessionStore` now types it as
+  `ArtifactStorePort`/`SessionStorePort` instead:
+  `app/api/dependencies.py` (`get_artifact_store`/`get_session_store`
+  and all three dependency-bundle dataclasses), `app/api/ownership.py`
+  (`load_owned`), `app/api/routes/requirements.py`,
+  `app/api/routes/artifacts.py`, `app/session.py`'s `DesignSession`, and
+  `app/design/session.py`'s `ArchitectureSession` (whose own narrow,
+  locally-defined `DesignStore` `Protocol` — a strict subset of
+  `ArtifactStorePort` — was deleted in favor of depending on the real
+  port directly, once one existed to depend on). `app/web/main.py`,
+  `app/main.py`, and `app/mcp/server.py` construct the concrete
+  `ArtifactStore`/`CosmosSessionStore` adapters at their own composition
+  roots exactly as before — only the *type* other layers see changed,
+  not who constructs the real thing.
+* Also fixed in this slice, found while sweeping for staleness rather
+  than being this slice's main goal: `app/application/use_cases
+  /classify_image.py` gained back the "document vs. diagram" module
+  docstring that used to live on the now-deleted `app/vision.py` — Slice
+  6 deleted that file without migrating its most useful piece of
+  documentation, leaving `ClassifyImageUseCase`/
+  `InterpretDiagramImageUseCase` with a one-line docstring apiece and no
+  explanation of the wider problem they solve together.
+* Tests: `tests/test_storage.py` renamed to `tests/test_artifact_store.py`
+  (matching `tests/test_session_store.py`'s naming for the storage
+  adapter it now sits beside) and its `@patch("app.storage...")` targets
+  updated to `app.infrastructure.artifact_store`.
+  `tests/test_design_storage.py`, `tests/test_session_store.py`,
+  `tests/test_artifacts_routes.py`, `tests/test_ownership.py`,
+  `tests/test_rbac.py`, and `tests/test_requirements_routes.py` had their
+  `SessionRecord`/`SessionConflictError` imports switched from
+  `app.infrastructure.session_store` to `app.domain.session`/
+  `app.application.errors` respectively — no assertion logic changed,
+  since these are the same classes at new import paths.
+* Verified the same way as Slices 5–6: grepped for `app.storage`/
+  `from app.infrastructure.session_store import` (beyond
+  `CosmosSessionStore`) across `app/` and `tests/` after the edits,
+  confirmed zero remaining hits, then ran the full
+  `pytest`/`ruff`/`mypy --strict`/`pyright` suite clean.
 
-1. **Move `app/design/models.py` into `app/domain/`** alongside
-   Slice 1's `app/domain/requirements.py`, as its own bounded context
-   module (e.g. `app/domain/design.py`) — also removes the interim
-   `app.application.ports`/`app.application.use_cases
-   .generate_system_design`/`interpret_diagram_image` dependency on
-   `app.design.models` noted above.
-2. **Migrate remaining importers off `app/models.py`**, then delete it.
-3. **Migrate `app/analyzer.py`/`app/design/analyzer.py`/`app/vision.py`'s
-   call sites onto their use cases directly** (constructed via a
-   composition root in `app/api/dependencies.py`/`app/mcp/server.py`/
-   `app/main.py`), then delete all three facade modules.
-4. **Ports + adapters for storage** — `ArtifactStorePort`/
-   `SessionStorePort` in `app/application/ports.py`, with
-   `app/storage.py`'s `ArtifactStore` and
-   `app/infrastructure/session_store.py`'s Cosmos store becoming
-   their concrete `app/infrastructure/` implementations (mostly a move
-   + an explicit `Protocol`, since both are already reasonably
-   isolated).
-5. **Diagram generation as a port** — `DiagramRendererPort` wrapping
-   `app/design/diagram.py`'s `ArchitectureDiagramGenerator`, so use
-   cases depend on the abstraction rather than importing Graphviz
-   directly.
+**Slice 8 (done) — Diagram generation as a port:**
 
-Each slice should ship the same way Slices 1–3 did: real code backed by a
-verified library API (not just documentation — Microsoft's own docs
-disagreed with each other about `agent_framework` class names across
-pages during this migration; the installed package was checked
-directly with `python -c "import agent_framework; ..."` to confirm),
-full test coverage with fakes at the port boundary (no real network
-calls in unit tests), a green `pytest`/`ruff`/`mypy --strict`/`pyright`
-run, and this README updated in the same round — not deferred to "later."
+* `app/application/ports.py` gained `DiagramRendererPort` (one method,
+  `generate(design: SystemDesignArtifact) -> str`). Unlike every other
+  port added in this migration, its concrete implementation
+  (`app.design.diagram.ArchitectureDiagramGenerator`) isn't built via
+  `app/infrastructure/composition.py` — rendering needs no credentials
+  or environment configuration to wire up, so each call site
+  (`app/main.py`, `app/api/dependencies.py`, `app/mcp/server.py`)
+  keeps constructing `ArchitectureDiagramGenerator()` directly, same as
+  before. The port exists so `app.design.session.ArchitectureSession`
+  (and anything else that renders a design) depends on "something that
+  can render a design" rather than on Graphviz specifically — not to
+  hide how the real one gets built.
+* `app/application/errors.py` gained `DiagramGenerationError`, moved
+  out of `app/design/diagram.py` (previously defined and raised in the
+  same module) so it lives alongside every other application-layer
+  error type rather than being the one exception a presentation-layer
+  caller (`app/main.py`) had to reach into `app.design.diagram` for.
+* `app/design/diagram.py` — `ArchitectureDiagramGenerator`'s class
+  docstring now states it's the concrete `DiagramRendererPort`
+  implementation, satisfied structurally (no inheritance).
+* `app/design/session.py` — `ArchitectureSession.__init__`'s
+  `diagram_generator` parameter retyped from `ArchitectureDiagramGenerator`
+  to `DiagramRendererPort`; the now-unused concrete import was dropped.
+* `app/api/dependencies.py` — `get_diagram_generator` retyped to return
+  `DiagramRendererPort`; both dependency-bundle dataclasses
+  (`ArchitectureGenerationDependencies`, `ImageUploadDependencies`) and
+  their `Depends(...)` parameters retyped from
+  `ArchitectureDiagramGenerator` to `DiagramRendererPort`.
+* `app/main.py` — `DiagramGenerationError` now imported from
+  `app.application.errors` alongside `DesignGenerationError`, instead of
+  from `app.design.diagram`.
+* No test changes were needed: every existing test that exercises a
+  diagram generator does so through a `MagicMock()` dependency override
+  (`tests/test_requirements_routes.py`, `tests/test_rbac.py`,
+  `tests/test_artifacts_routes.py`) or the real
+  `ArchitectureDiagramGenerator` directly
+  (`tests/test_design_diagram.py`) — neither cares about the type
+  annotation on the parameter it's satisfying, so retyping call sites
+  to the port didn't require touching either.
+* Verified the same way as every prior slice: grepped for
+  `DiagramGenerationError` across `app/` and confirmed the only
+  remaining references are its new home
+  (`app/application/errors.py`) and its one still-valid import
+  (`app/main.py`), then ran the full
+  `pytest`/`ruff`/`mypy --strict`/`pyright` suite clean.
+
+This closes out the Clean Architecture migration — all 8 planned slices
+are done. Each shipped the same way: real code backed by a verified
+library API (not just documentation — Microsoft's own docs disagreed
+with each other about `agent_framework` class names across pages during
+this migration; the installed package was checked directly with
+`python -c "import agent_framework; ..."` to confirm), full test
+coverage with fakes at the port boundary (no real network calls in unit
+tests), a green `pytest`/`ruff`/`mypy --strict`/`pyright` run, and this
+README updated in the same round — not deferred to "later."
 
 ---
 
@@ -2580,7 +2878,7 @@ Refinement Request (free-text)
         │
         ▼
 System Design Analyzer
-  (SystemDesignAnalyzer.analyze,
+  (GenerateSystemDesignUseCase.execute,
    previous_design + refinement_input)
         │
         ▼
@@ -2866,12 +3164,15 @@ Implemented:
   Document Intelligence's `prebuilt-read` model — one shared OCR +
   layout-aware extraction path instead of a separate library per format
   (`pypdf`, `python-docx`, `pytesseract`, ...). Whatever text comes out
-  feeds into `RequirementsAnalyzer.analyze()` exactly like typed input —
-  the rest of the requirements pipeline doesn't know or care whether its
-  input was typed or extracted from a document.
+  feeds into `AnalyzeRequirementsUseCase.execute()` exactly like typed
+  input — the rest of the requirements pipeline doesn't know or care
+  whether its input was typed or extracted from a document.
 * The Document Intelligence client is built **lazily**, on first actual
-  use — unlike `AZURE_OPENAI_*`, which `app/analyzer.py` requires eagerly
-  at import time. File upload is optional and additive: a deployment that
+  use — unlike `AZURE_OPENAI_*`, which
+  `app/infrastructure/composition.py` requires eagerly whenever one of
+  its `build_*_use_case` functions runs (at composition-root call time,
+  not at import time — see "Clean Architecture Migration" → Slice 6).
+  File upload is optional and additive: a deployment that
   only ever uses typed text input must keep working without
   `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT`/`AZURE_DOCUMENT_INTELLIGENCE_KEY`
   configured at all.
@@ -2937,34 +3238,35 @@ transcribe box labels as if they were requirements text. This feature
 classifies every uploaded image first and routes it accordingly:
 
 * A **document** screenshot → processed exactly as before (OCR via
-  Document Intelligence → `RequirementsAnalyzer`).
+  Document Intelligence → `AnalyzeRequirementsUseCase`).
 * A **diagram** → redrawn directly into a clean, well-architected system
   design and dropped straight into the architecture stage, skipping
   typed/extracted requirements text entirely.
 
 Implemented:
 
-* `app/vision.py` — `ImageInputClassifier.classify(content, filename) ->
-  ImageClassification` (`kind: "document" | "diagram"` plus a
-  one-sentence `reasoning`) and `DiagramImageInterpreter.interpret(...)
-  -> SystemDesignArtifact` against the same vision-capable
-  `AZURE_OPENAI_MODEL` deployment every other analyzer already requires
-  — no new environment variable. As of Clean Architecture Migration
-  Slice 3 (see "Next Steps" → "Clean Architecture Migration"), both are
-  backward-compatible sync/async facades over Microsoft Agent Framework
-  `Agent`s (`app/infrastructure/agents/image_classifier_agent.py` /
+* `ClassifyImageUseCase.execute(content, filename) -> ImageClassification`
+  (`kind: "document" | "diagram"` plus a one-sentence `reasoning`) and
+  `InterpretDiagramImageUseCase.execute(...) -> SystemDesignArtifact`
+  against the same vision-capable `AZURE_OPENAI_MODEL` deployment every
+  other use case already requires — no new environment variable. As of
+  Clean Architecture Migration Slice 6 (see "Next Steps" → "Clean
+  Architecture Migration"), both are pure orchestration against
+  `ImageClassifierPort`/`DiagramImageInterpreterPort`, implemented by
+  Microsoft Agent Framework `Agent`s
+  (`app/infrastructure/agents/image_classifier_agent.py` /
   `diagram_image_interpreter_agent.py`) rather than a direct Azure
-  OpenAI Responses API call — multimodal input now goes through an
+  OpenAI Responses API call — multimodal input goes through an
   `agent_framework.Message` mixing a text `Content` part with an image
   `Content` part, instead of `input_text`/`input_image` Responses API
-  content items. `DiagramImageInterpreter` reuses the exact
-  `SystemDesignArtifact` schema `SystemDesignAnalyzer` produces from
-  text, so an image-derived design is indistinguishable downstream
+  content items. `InterpretDiagramImageUseCase` reuses the exact
+  `SystemDesignArtifact` schema `GenerateSystemDesignUseCase` produces
+  from text, so an image-derived design is indistinguishable downstream
   (validation, diagram rendering, versioning, refinement, approval) from
   a text-derived one. It also supports refinement: passing the session's
   `previous_design` treats a later diagram upload as amending that
   design rather than replacing it outright, mirroring
-  `SystemDesignAnalyzer.analyze`'s "preserve what's still valid"
+  `GenerateSystemDesignUseCase.execute`'s "preserve what's still valid"
   contract.
 * `app/ingestion.py` — `is_image_filename()` identifies which uploads
   (`.png`/`.jpg`/`.jpeg`) are eligible for classification before falling
@@ -3027,9 +3329,9 @@ Implemented, in order of impact:
 
 * **Domain clustering** — `DesignComponent` gained an optional `domain`
   field (a short group/category name, e.g. "Client & Identity", "Data
-  Platform"); `SystemDesignAnalyzer` and `DiagramImageInterpreter`
-  (`app/vision.py`) both prompt for it now — the latter reading it
-  directly off any visible grouping/labeled sections in an uploaded
+  Platform"); `GenerateSystemDesignUseCase` and
+  `InterpretDiagramImageUseCase` both prompt for it now — the latter
+  reading it directly off any visible grouping/labeled sections in an uploaded
   diagram image, or inferring a small number of sensible domains when
   the image has none. `ArchitectureDiagramGenerator` renders each domain
   as its own labeled Graphviz cluster, so related components stay
@@ -3274,7 +3576,7 @@ get started. The requirements-to-architecture flow is now usable through
 MCP alone, end to end. `refine_architecture` closed the next gap: an
 accepted architecture no longer has to be regenerated from scratch (or
 edited outside the tool entirely) to apply a change — see the web API's
-`POST .../refine-architecture` and `SystemDesignAnalyzer.analyze`'s
+`POST .../refine-architecture` and `GenerateSystemDesignUseCase.execute`'s
 `previous_design`/`refinement_input` parameters.
 
 `get_architecture`, `compare_architectures`, and `get_traceability` remain

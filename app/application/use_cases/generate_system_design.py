@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.application.ports import SystemDesignAgentPort
-from app.design.models import SystemDesignArtifact
+from app.domain.design import SystemDesignArtifact
 from app.domain.requirements import RequirementsArtifact
 
 

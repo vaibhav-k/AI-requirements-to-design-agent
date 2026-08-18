@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.application.use_cases.generate_system_design import (
     GenerateSystemDesignUseCase,
 )
-from app.design.models import SystemDesignArtifact
+from app.domain.design import SystemDesignArtifact
 from app.domain.requirements import RequirementsArtifact
 
 

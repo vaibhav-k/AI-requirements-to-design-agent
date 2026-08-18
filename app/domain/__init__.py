@@ -11,11 +11,11 @@ must never import `openai`, `azure.*`, `agent_framework`, `fastapi`,
 or anything from `app.infrastructure`/`app.api`.
 
 See the README's "Clean Architecture Migration" section for the full
-layering rationale and migration plan. As of that migration's first
-slice, only the requirements bounded context
-(`app.domain.requirements`) has moved here; `app.design.models` (the
-architecture/design bounded context) is scheduled for a later slice
-and still lives at its original location.
+layering rationale and migration plan. The requirements bounded context
+(`app.domain.requirements`), the architecture/design bounded context
+(`app.domain.design`), vision-related value objects (`app.domain.vision`),
+and the requirements-to-architecture run entity (`app.domain.session`'s
+`SessionRecord`) all live here.
 """
 
 from __future__ import annotations

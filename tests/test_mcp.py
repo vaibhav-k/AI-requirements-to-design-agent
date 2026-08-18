@@ -2,17 +2,17 @@ import json
 
 import pytest
 
-from app.design.models import (
+from app.domain.design import (
     DesignComponent,
     SystemDesignArtifact,
 )
+from app.domain.requirements import RequirementsArtifact
 from app.mcp import server as mcp_server
 from app.mcp.server import (
     design_schema,
     requirements_schema,
     validate_system_design,
 )
-from app.models import RequirementsArtifact
 
 
 class _FakeRequirementsAgent:
@@ -58,14 +58,14 @@ def _requirements_artifact(
 @pytest.fixture
 def mock_requirements_agent() -> _FakeRequirementsAgent:
     """Replace the module-level `_requirements_analyzer`'s underlying
-    ``RequirementsAgentPort`` with a fake for the duration of a test, the
-    same way test_analyzer.py injects a fake agent into a standalone
-    ``RequirementsAnalyzer`` — this one is a singleton constructed at
-    import time by app.mcp.server, so its use case's agent is patched in
-    place rather than re-instantiating the whole analyzer."""
+    ``RequirementsAgentPort`` with a fake for the duration of a test — it's
+    a singleton ``AnalyzeRequirementsUseCase`` constructed at import time by
+    ``app.mcp.server`` (via ``app.infrastructure.composition``), so its
+    ``.agent`` is patched in place rather than re-instantiating the whole
+    use case."""
 
     fake_agent = _FakeRequirementsAgent(_requirements_artifact())
-    mcp_server._requirements_analyzer._use_case.agent = fake_agent
+    mcp_server._requirements_analyzer.agent = fake_agent
     return fake_agent
 
 
@@ -99,7 +99,7 @@ def mock_design_agent() -> _FakeSystemDesignAgent:
     fake_agent = _FakeSystemDesignAgent(
         SystemDesignArtifact(architecture_summary="A design.")
     )
-    mcp_server._design_analyzer._use_case.agent = fake_agent
+    mcp_server._design_analyzer.agent = fake_agent
     return fake_agent
 
 

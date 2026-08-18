@@ -39,12 +39,11 @@ from pydantic import ValidationError
 
 from app.api.dependencies import get_artifact_store, get_session_store
 from app.api.ownership import load_owned
+from app.application.ports import ArtifactStorePort, SessionStorePort
 from app.design.comparison import ArchitectureComparison, compare_architectures
-from app.design.models import SystemDesignArtifact
-from app.infrastructure.session_store import SessionStore
-from app.models import RequirementsArtifact, StoredArtifact
+from app.domain.design import SystemDesignArtifact
+from app.domain.requirements import RequirementsArtifact, StoredArtifact
 from app.security.auth import ROLE_ARCHITECT, ROLE_REVIEWER, ROLE_USER, require_role
-from app.storage import ArtifactStore
 
 # Every route in this router needs the exact same role check — any of the
 # three functional roles (Admin passes automatically, see
@@ -83,8 +82,10 @@ def _malformed(kind: str, version: int) -> HTTPException:
 def list_requirements_versions(
     session_id: str,
     request: Request,
-    store: Annotated[SessionStore, Depends(get_session_store)],  # noqa: B008
-    artifact_store: Annotated[ArtifactStore, Depends(get_artifact_store)],  # noqa: B008
+    store: Annotated[SessionStorePort, Depends(get_session_store)],  # noqa: B008
+    artifact_store: Annotated[
+        ArtifactStorePort, Depends(get_artifact_store)
+    ],  # noqa: B008
 ) -> list[int]:
     load_owned(store, session_id, request)
     return artifact_store.list_requirements_versions(session_id)
@@ -97,8 +98,10 @@ def get_requirements_version(
     session_id: str,
     version: int,
     request: Request,
-    store: Annotated[SessionStore, Depends(get_session_store)],  # noqa: B008
-    artifact_store: Annotated[ArtifactStore, Depends(get_artifact_store)],  # noqa: B008
+    store: Annotated[SessionStorePort, Depends(get_session_store)],  # noqa: B008
+    artifact_store: Annotated[
+        ArtifactStorePort, Depends(get_artifact_store)
+    ],  # noqa: B008
 ) -> RequirementsArtifact:
     load_owned(store, session_id, request)
 
@@ -118,15 +121,17 @@ def get_requirements_version(
 def list_architecture_versions(
     session_id: str,
     request: Request,
-    store: Annotated[SessionStore, Depends(get_session_store)],  # noqa: B008
-    artifact_store: Annotated[ArtifactStore, Depends(get_artifact_store)],  # noqa: B008
+    store: Annotated[SessionStorePort, Depends(get_session_store)],  # noqa: B008
+    artifact_store: Annotated[
+        ArtifactStorePort, Depends(get_artifact_store)
+    ],  # noqa: B008
 ) -> list[int]:
     load_owned(store, session_id, request)
     return artifact_store.list_design_versions(session_id)
 
 
 def _load_architecture_version(
-    artifact_store: ArtifactStore,
+    artifact_store: ArtifactStorePort,
     session_id: str,
     version: int,
 ) -> SystemDesignArtifact:
@@ -151,8 +156,10 @@ def compare_architecture_versions(
     request: Request,
     from_version: Annotated[int, Query(alias="from")],
     to_version: Annotated[int, Query(alias="to")],
-    store: Annotated[SessionStore, Depends(get_session_store)],  # noqa: B008
-    artifact_store: Annotated[ArtifactStore, Depends(get_artifact_store)],  # noqa: B008
+    store: Annotated[SessionStorePort, Depends(get_session_store)],  # noqa: B008
+    artifact_store: Annotated[
+        ArtifactStorePort, Depends(get_artifact_store)
+    ],  # noqa: B008
 ) -> ArchitectureComparison:
     """A structured diff between two persisted architecture versions.
 
@@ -187,8 +194,10 @@ def get_architecture_version(
     session_id: str,
     version: int,
     request: Request,
-    store: Annotated[SessionStore, Depends(get_session_store)],  # noqa: B008
-    artifact_store: Annotated[ArtifactStore, Depends(get_artifact_store)],  # noqa: B008
+    store: Annotated[SessionStorePort, Depends(get_session_store)],  # noqa: B008
+    artifact_store: Annotated[
+        ArtifactStorePort, Depends(get_artifact_store)
+    ],  # noqa: B008
 ) -> SystemDesignArtifact:
     load_owned(store, session_id, request)
     return _load_architecture_version(artifact_store, session_id, version)
@@ -199,8 +208,10 @@ def get_architecture_diagram(
     session_id: str,
     version: int,
     request: Request,
-    store: Annotated[SessionStore, Depends(get_session_store)],  # noqa: B008
-    artifact_store: Annotated[ArtifactStore, Depends(get_artifact_store)],  # noqa: B008
+    store: Annotated[SessionStorePort, Depends(get_session_store)],  # noqa: B008
+    artifact_store: Annotated[
+        ArtifactStorePort, Depends(get_artifact_store)
+    ],  # noqa: B008
 ) -> Response:
     load_owned(store, session_id, request)
 

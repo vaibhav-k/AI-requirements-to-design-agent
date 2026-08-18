@@ -16,35 +16,49 @@ from dataclasses import dataclass
 
 from fastapi import Depends, Request
 
-from app.analyzer import RequirementsAnalyzer
-from app.design.analyzer import SystemDesignAnalyzer
+from app.application.ports import (
+    ArtifactStorePort,
+    DiagramRendererPort,
+    SessionStorePort,
+)
+from app.application.use_cases.analyze_requirements import AnalyzeRequirementsUseCase
+from app.application.use_cases.classify_image import ClassifyImageUseCase
+from app.application.use_cases.generate_system_design import (
+    GenerateSystemDesignUseCase,
+)
+from app.application.use_cases.interpret_diagram_image import (
+    InterpretDiagramImageUseCase,
+)
 from app.design.diagram import ArchitectureDiagramGenerator
 from app.design.validator import ArchitectureValidator
-from app.infrastructure.session_store import SessionStore
+from app.infrastructure.composition import (
+    build_diagram_interpreter_use_case,
+    build_image_classifier_use_case,
+    build_requirements_use_case,
+    build_system_design_use_case,
+)
 from app.ingestion import RequirementsDocumentExtractor
-from app.storage import ArtifactStore
-from app.vision import DiagramImageInterpreter, ImageInputClassifier
 
 
-def get_session_store(request: Request) -> SessionStore:
-    store: SessionStore = request.app.state.session_store
+def get_session_store(request: Request) -> SessionStorePort:
+    store: SessionStorePort = request.app.state.session_store
     return store
 
 
-def get_artifact_store(request: Request) -> ArtifactStore:
-    store: ArtifactStore = request.app.state.artifact_store
+def get_artifact_store(request: Request) -> ArtifactStorePort:
+    store: ArtifactStorePort = request.app.state.artifact_store
     return store
 
 
-def get_requirements_analyzer() -> RequirementsAnalyzer:
-    return RequirementsAnalyzer()
+def get_requirements_analyzer() -> AnalyzeRequirementsUseCase:
+    return build_requirements_use_case()
 
 
-def get_design_analyzer() -> SystemDesignAnalyzer:
-    return SystemDesignAnalyzer()
+def get_design_analyzer() -> GenerateSystemDesignUseCase:
+    return build_system_design_use_case()
 
 
-def get_diagram_generator() -> ArchitectureDiagramGenerator:
+def get_diagram_generator() -> DiagramRendererPort:
     return ArchitectureDiagramGenerator()
 
 
@@ -56,12 +70,12 @@ def get_document_extractor() -> RequirementsDocumentExtractor:
     return RequirementsDocumentExtractor()
 
 
-def get_image_classifier() -> ImageInputClassifier:
-    return ImageInputClassifier()
+def get_image_classifier() -> ClassifyImageUseCase:
+    return build_image_classifier_use_case()
 
 
-def get_diagram_interpreter() -> DiagramImageInterpreter:
-    return DiagramImageInterpreter()
+def get_diagram_interpreter() -> InterpretDiagramImageUseCase:
+    return build_diagram_interpreter_use_case()
 
 
 @dataclass
@@ -80,16 +94,16 @@ class ArchitectureGenerationDependencies:
     pattern changes.
     """
 
-    store: ArtifactStore
-    analyzer: SystemDesignAnalyzer
-    diagram_generator: ArchitectureDiagramGenerator
+    store: ArtifactStorePort
+    analyzer: GenerateSystemDesignUseCase
+    diagram_generator: DiagramRendererPort
     validator: ArchitectureValidator
 
 
 def get_architecture_generation_dependencies(
-    artifact_store: ArtifactStore = Depends(get_artifact_store),  # noqa: B008
-    analyzer: SystemDesignAnalyzer = Depends(get_design_analyzer),  # noqa: B008
-    diagram_generator: ArchitectureDiagramGenerator = Depends(  # noqa: B008
+    artifact_store: ArtifactStorePort = Depends(get_artifact_store),  # noqa: B008
+    analyzer: GenerateSystemDesignUseCase = Depends(get_design_analyzer),  # noqa: B008
+    diagram_generator: DiagramRendererPort = Depends(  # noqa: B008
         get_diagram_generator
     ),
     validator: ArchitectureValidator = Depends(get_validator),  # noqa: B008
@@ -114,14 +128,16 @@ class RequirementsUploadDependencies:
     doesn't change the individual-service test-override pattern.
     """
 
-    artifact_store: ArtifactStore
-    analyzer: RequirementsAnalyzer
+    artifact_store: ArtifactStorePort
+    analyzer: AnalyzeRequirementsUseCase
     extractor: RequirementsDocumentExtractor
 
 
 def get_requirements_upload_dependencies(
-    artifact_store: ArtifactStore = Depends(get_artifact_store),  # noqa: B008
-    analyzer: RequirementsAnalyzer = Depends(get_requirements_analyzer),  # noqa: B008
+    artifact_store: ArtifactStorePort = Depends(get_artifact_store),  # noqa: B008
+    analyzer: AnalyzeRequirementsUseCase = Depends(  # noqa: B008
+        get_requirements_analyzer
+    ),
     extractor: RequirementsDocumentExtractor = Depends(  # noqa: B008
         get_document_extractor
     ),
@@ -140,30 +156,33 @@ class ImageUploadDependencies:
 
     An uploaded PNG/JPG/JPEG could turn out to be either a document
     screenshot (handled by ``RequirementsUploadDependencies`` exactly as
-    before) or a system design/workflow diagram — see ``app/vision.py``.
-    The diagram branch needs everything ``ArchitectureGenerationDependencies``
+    before) or a system design/workflow diagram — see
+    ``app.application.use_cases.classify_image``. The diagram branch
+    needs everything ``ArchitectureGenerationDependencies``
     already bundles (to validate, render, and persist the interpreted
     design through ``ArchitectureSession.generate_from_design``) plus the
     classifier and interpreter themselves, so this composes both rather
     than repeating either.
     """
 
-    artifact_store: ArtifactStore
-    classifier: ImageInputClassifier
-    diagram_interpreter: DiagramImageInterpreter
-    design_analyzer: SystemDesignAnalyzer
-    diagram_generator: ArchitectureDiagramGenerator
+    artifact_store: ArtifactStorePort
+    classifier: ClassifyImageUseCase
+    diagram_interpreter: InterpretDiagramImageUseCase
+    design_analyzer: GenerateSystemDesignUseCase
+    diagram_generator: DiagramRendererPort
     validator: ArchitectureValidator
 
 
 def get_image_upload_dependencies(
-    artifact_store: ArtifactStore = Depends(get_artifact_store),  # noqa: B008
-    classifier: ImageInputClassifier = Depends(get_image_classifier),  # noqa: B008
-    diagram_interpreter: DiagramImageInterpreter = Depends(  # noqa: B008
+    artifact_store: ArtifactStorePort = Depends(get_artifact_store),  # noqa: B008
+    classifier: ClassifyImageUseCase = Depends(get_image_classifier),  # noqa: B008
+    diagram_interpreter: InterpretDiagramImageUseCase = Depends(  # noqa: B008
         get_diagram_interpreter
     ),
-    design_analyzer: SystemDesignAnalyzer = Depends(get_design_analyzer),  # noqa: B008
-    diagram_generator: ArchitectureDiagramGenerator = Depends(  # noqa: B008
+    design_analyzer: GenerateSystemDesignUseCase = Depends(  # noqa: B008
+        get_design_analyzer
+    ),
+    diagram_generator: DiagramRendererPort = Depends(  # noqa: B008
         get_diagram_generator
     ),
     validator: ArchitectureValidator = Depends(get_validator),  # noqa: B008

@@ -8,8 +8,9 @@ from typing import NamedTuple, Protocol, cast
 
 from graphviz import Digraph
 
+from app.application.errors import DiagramGenerationError
 from app.design.icons import component_icon_path, dependency_icon_path
-from app.design.models import DesignComponent, SystemDesignArtifact
+from app.domain.design import DesignComponent, SystemDesignArtifact
 
 
 class GraphRenderer(Protocol):
@@ -54,10 +55,6 @@ class GraphRenderer(Protocol):
         ...
 
 
-class DiagramGenerationError(RuntimeError):
-    """Raised when diagram generation fails."""
-
-
 class _DiagramNode(NamedTuple):
     """One component or external dependency to place via
     `ArchitectureDiagramGenerator._lay_out_column`, already resolved to
@@ -83,8 +80,14 @@ _LOCAL_IMAGE_HREF_PATTERN = re.compile(r'((?:xlink:href|href))="([^"]+\.png)"')
 class ArchitectureDiagramGenerator:
     """Generate a high-level architecture diagram as SVG.
 
+    The concrete ``app.application.ports.DiagramRendererPort``
+    implementation — satisfied structurally via its ``generate`` method,
+    no inheritance required. See that port's docstring for why this
+    doesn't go through ``app.infrastructure.composition`` the way the
+    agent adapters do.
+
     Components are grouped into one Graphviz *cluster* per
-    ``DesignComponent.domain`` (see ``app/design/models.py``), so
+    ``DesignComponent.domain`` (see ``app/domain/design.py``), so
     related components stay visually together and most real edges stay
     short instead of arcing across the whole diagram. This replaced an
     earlier design that forced every component into one flat page-wide

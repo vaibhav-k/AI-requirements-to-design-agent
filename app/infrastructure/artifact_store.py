@@ -1,3 +1,14 @@
+"""Azure Blob Storage-backed requirements/design artifact persistence.
+
+Moved here, verbatim aside from its imports, from ``app/storage.py`` as
+part of "Ports + adapters for storage" (see README -> "Clean
+Architecture Migration") — ``ArtifactStore`` is the concrete
+``app.application.ports.ArtifactStorePort`` implementation, the same
+"adapter lives in ``app.infrastructure``" home
+``app.infrastructure.session_store.CosmosSessionStore`` already has for
+the session-state analogue of this store.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -11,7 +22,8 @@ from azure.storage.blob import (
 )
 from dotenv import load_dotenv
 
-from app.models import StoredArtifact
+from app.application.errors import ArtifactVersionConflict
+from app.domain.requirements import StoredArtifact
 
 load_dotenv()
 
@@ -34,12 +46,12 @@ AZURE_STORAGE_ENVIRONMENT = os.getenv(
 )
 
 
-class ArtifactVersionConflict(RuntimeError):
-    """Raised when an artifact version already exists."""
-
-
 class ArtifactStore:
-    """Store requirements and design artifacts in Azure Blob Storage."""
+    """Store requirements and design artifacts in Azure Blob Storage.
+
+    Implements ``app.application.ports.ArtifactStorePort`` structurally —
+    no inheritance needed, just matching method signatures.
+    """
 
     def __init__(
         self,
