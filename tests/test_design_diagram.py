@@ -259,3 +259,56 @@ def test_diagram_handles_large_multi_domain_design_without_crashing() -> None:
     svg = ArchitectureDiagramGenerator().generate(design)
 
     assert "<svg" in svg
+
+
+def test_diagram_labeled_interface_uses_a_label_node_not_an_xlabel() -> None:
+    """Regression test for a real overlap bug reported against a
+    generated diagram: an interface's edge label rendered directly on
+    top of a neighboring node's caption text, and — separately — a
+    label rendered visibly disconnected from the edge line it named.
+
+    Both defects traced back to using Graphviz's `xlabel` (an
+    auto-placed "exterior label" that reserves no layout space and can
+    be positioned anywhere clear of *some* overlaps, or forced to
+    overlap, or dropped — see `_add_labeled_edge`'s docstring for the
+    full investigation, including why the `forcelabels="false"`
+    alternative was tried and rejected). The fix routes a labeled edge
+    through an intermediate borderless `shape="plaintext"` node instead,
+    so Graphviz's core layout — not the exterior-label heuristic —
+    reserves real space for it and guarantees no overlap, while the
+    label still sits directly on the connecting line.
+
+    This is asserted on the rendered SVG's `<title>` elements, which
+    Graphviz emits one per node/edge named after its Graphviz identity
+    (a node's `<title>` is its id; an edge's is `id1->id2`). A plain
+    `xlabel` never produces its own node, so a `<title>` for the label
+    text itself is a signal this is going through the label-node path."""
+
+    design = SystemDesignArtifact(
+        architecture_summary="Document platform.",
+        components=[
+            DesignComponent(id="api", name="API", responsibility="x"),
+            DesignComponent(id="service", name="Service", responsibility="y"),
+        ],
+        interfaces=[
+            DesignInterface(
+                id="i1",
+                name="Fetch Data",
+                purpose="p",
+                source_component="api",
+                target_component="service",
+            )
+        ],
+    )
+
+    svg = ArchitectureDiagramGenerator().generate(design)
+
+    # The label text appears exactly once — as its own node's caption —
+    # not duplicated across a node and a separate xlabel.
+    assert svg.count("Fetch Data") == 1
+    assert "<title>__label__i1</title>" in svg
+    # Both split edges (api -&gt; label node, label node -&gt; service) are
+    # present, so the label sits directly on the connecting line rather
+    # than off to one side of it.
+    assert "<title>api&#45;&gt;__label__i1</title>" in svg
+    assert "<title>__label__i1&#45;&gt;service</title>" in svg

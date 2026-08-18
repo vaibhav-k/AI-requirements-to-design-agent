@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from mcp.server import MCPServer
+from mcp.server.fastmcp import FastMCP as MCPServer
 
 from app.analyzer import RequirementsAnalyzer
 from app.design.analyzer import SystemDesignAnalyzer

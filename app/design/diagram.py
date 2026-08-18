@@ -458,13 +458,12 @@ class ArchitectureDiagramGenerator:
                 interface.target_component
             )
 
-            graph.edge(
-                interface.source_component,
-                interface.target_component,
-                label="",
-                # `xlabel`, not `label` — see `_create_graph`'s
-                # `splines="ortho"` comment for why.
-                xlabel="" if suppress_labels else interface.name,
+            ArchitectureDiagramGenerator._add_labeled_edge(
+                graph,
+                source=interface.source_component,
+                target=interface.target_component,
+                label_id=f"__label__{interface.id}",
+                label_text="" if suppress_labels else interface.name,
                 tooltip=interface.purpose,
                 # An interface within a single domain cluster is allowed
                 # to influence layout (helping Graphviz order/route it
@@ -494,13 +493,12 @@ class ArchitectureDiagramGenerator:
                 # edge still carries the full `tooltip` regardless.
                 show_label = not suppress_labels and position == 0
 
-                graph.edge(
-                    component_id,
-                    dependency.id,
-                    label="",
-                    # `xlabel`, not `label` — see `_create_graph`'s
-                    # `splines="ortho"` comment for why.
-                    xlabel=dependency.name if show_label else "",
+                ArchitectureDiagramGenerator._add_labeled_edge(
+                    graph,
+                    source=component_id,
+                    target=dependency.id,
+                    label_id=f"__label__{dependency.id}__{component_id}",
+                    label_text=dependency.name if show_label else "",
                     tooltip=dependency.purpose,
                     style="dashed",
                     color="darkgoldenrod",
@@ -512,3 +510,99 @@ class ArchitectureDiagramGenerator:
                     # several unrelated domains — kept `False`, as before.
                     constraint="false",
                 )
+
+    @staticmethod
+    def _add_labeled_edge(
+        graph: GraphRenderer,
+        *,
+        source: str,
+        target: str,
+        label_id: str,
+        label_text: str,
+        tooltip: str,
+        constraint: str,
+        style: str = "solid",
+        color: str = "gray40",
+    ) -> None:
+        """Draw a single directed connection from ``source`` to
+        ``target``, optionally with a name shown along the way.
+
+        An earlier version of this attached the name as an edge
+        `xlabel` — Graphviz's own auto-placed "exterior label", positioned
+        near the edge without reserving any layout space for it. That
+        produced two real, user-reported defects on non-trivial diagrams:
+        an xlabel rendering directly on top of a neighboring node's
+        caption text, and a separate xlabel rendered visibly disconnected
+        from the edge it named. Graphviz's `forcelabels="false"` escape
+        hatch (drop a label instead of overlapping) was tried and
+        rejected: with `rankdir="LR"` (required for this diagram's
+        left-to-right flow — see `_create_graph`), the installed
+        `dot` (Graphviz 2.42/2.43) drops *every* exterior label, even in
+        a trivial two-node, one-edge diagram with the entire canvas
+        empty — a real layout-engine limitation, not a spacing problem
+        (confirmed empirically: increasing `nodesep`/`ranksep` had no
+        effect).
+
+        Instead, when there's a name to show, the single edge is split
+        into two: `source -> label node -> target`, where the label node
+        is a borderless, fill-less `shape="plaintext"` node whose only
+        content is the name. Splitting the edge like this means the
+        label is a first-class node in Graphviz's own layout — `dot`
+        reserves real rank/column space for it and guarantees no other
+        node overlaps it, exactly the same overlap-avoidance every
+        component/dependency icon node already gets — while still
+        visibly sitting *on* the connecting line (it has a real inbound
+        and outbound edge segment), which reads unambiguously as "this
+        interface's name" rather than a floating annotation. `tooltip`
+        is set on the label node and both edge segments so hovering
+        either the label or the line shows the full description
+        regardless of which part the pointer happens to be over.
+
+        When there's no name to show (label text is blank — either this
+        specific edge never had one, or `_create_graph`'s caller
+        suppressed all inline labels past `MAX_LABELED_EDGES`), this
+        draws a single plain edge exactly as before, unchanged.
+        """
+
+        if not label_text:
+            graph.edge(
+                source,
+                target,
+                label="",
+                tooltip=tooltip,
+                style=style,
+                color=color,
+                constraint=constraint,
+            )
+            return
+
+        graph.node(
+            label_id,
+            label_text,
+            shape="plaintext",
+            fontname="Helvetica",
+            fontsize="9",
+            fontcolor=color,
+            margin="0.02,0.02",
+            tooltip=tooltip,
+        )
+
+        graph.edge(
+            source,
+            label_id,
+            label="",
+            tooltip=tooltip,
+            style=style,
+            color=color,
+            arrowhead="none",
+            constraint=constraint,
+        )
+        graph.edge(
+            label_id,
+            target,
+            label="",
+            tooltip=tooltip,
+            style=style,
+            color=color,
+            constraint=constraint,
+        )

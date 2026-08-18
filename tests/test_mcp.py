@@ -1,5 +1,4 @@
 import json
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -14,6 +13,26 @@ from app.mcp.server import (
     validate_system_design,
 )
 from app.models import RequirementsArtifact
+
+
+class _FakeRequirementsAgent:
+    """A ``RequirementsAgentPort`` fake standing in for the Microsoft
+    Agent Framework-backed adapter, injected into the module-level
+    ``_requirements_analyzer`` singleton for the duration of a test (see
+    ``mock_requirements_agent`` below) — no real Azure OpenAI call, no
+    network. Mirrors the pattern in ``tests/test_analyzer.py``."""
+
+    def __init__(self, artifact: RequirementsArtifact) -> None:
+        self.artifact = artifact
+        self.calls: list[tuple[str, RequirementsArtifact | None]] = []
+
+    async def analyze(
+        self,
+        user_input: str,
+        previous_artifact: RequirementsArtifact | None = None,
+    ) -> RequirementsArtifact:
+        self.calls.append((user_input, previous_artifact))
+        return self.artifact
 
 
 def _requirements_artifact(
@@ -37,27 +56,51 @@ def _requirements_artifact(
 
 
 @pytest.fixture
-def mock_requirements_client() -> MagicMock:
-    """Replace the module-level `_requirements_analyzer`'s OpenAI client
-    with a mock for the duration of a test, the same way test_analyzer.py
-    mocks a standalone RequirementsAnalyzer — this one is a singleton
-    constructed at import time by app.mcp.server, so it's patched in place
-    rather than re-instantiated."""
+def mock_requirements_agent() -> _FakeRequirementsAgent:
+    """Replace the module-level `_requirements_analyzer`'s underlying
+    ``RequirementsAgentPort`` with a fake for the duration of a test, the
+    same way test_analyzer.py injects a fake agent into a standalone
+    ``RequirementsAnalyzer`` — this one is a singleton constructed at
+    import time by app.mcp.server, so its use case's agent is patched in
+    place rather than re-instantiating the whole analyzer."""
 
-    client = MagicMock()
-    mcp_server._requirements_analyzer.client = client
-    return client
+    fake_agent = _FakeRequirementsAgent(_requirements_artifact())
+    mcp_server._requirements_analyzer._use_case.agent = fake_agent
+    return fake_agent
+
+
+class _FakeSystemDesignAgent:
+    """A ``SystemDesignAgentPort`` fake — the design-generation analogue
+    of ``_FakeRequirementsAgent`` above, injected into the module-level
+    ``_design_analyzer`` singleton for the duration of a test."""
+
+    def __init__(self, design: SystemDesignArtifact) -> None:
+        self.design = design
+        self.calls: list[
+            tuple[RequirementsArtifact, SystemDesignArtifact | None, str | None]
+        ] = []
+
+    async def generate(
+        self,
+        requirements: RequirementsArtifact,
+        previous_design: SystemDesignArtifact | None = None,
+        refinement_input: str | None = None,
+    ) -> SystemDesignArtifact:
+        self.calls.append((requirements, previous_design, refinement_input))
+        return self.design
 
 
 @pytest.fixture
-def mock_design_client() -> MagicMock:
-    """Replace the module-level `_design_analyzer`'s OpenAI client with a
-    mock, the same way `mock_requirements_client` does for the requirements
-    analyzer singleton."""
+def mock_design_agent() -> _FakeSystemDesignAgent:
+    """Replace the module-level `_design_analyzer`'s underlying
+    ``SystemDesignAgentPort`` with a fake for the duration of a test —
+    the design-generation analogue of `mock_requirements_agent` above."""
 
-    client = MagicMock()
-    mcp_server._design_analyzer.client = client
-    return client
+    fake_agent = _FakeSystemDesignAgent(
+        SystemDesignArtifact(architecture_summary="A design.")
+    )
+    mcp_server._design_analyzer._use_case.agent = fake_agent
+    return fake_agent
 
 
 def test_design_schema_is_valid_json() -> None:
@@ -81,31 +124,25 @@ def test_requirements_schema_is_valid_json() -> None:
 
 
 def test_analyze_requirements_tool_returns_structured_artifact(
-    mock_requirements_client: MagicMock,
+    mock_requirements_agent: _FakeRequirementsAgent,
 ) -> None:
     artifact = _requirements_artifact("A todo app for small teams.")
-
-    response = MagicMock()
-    response.output_parsed = artifact
-    mock_requirements_client.responses.parse.return_value = response
+    mock_requirements_agent.artifact = artifact
 
     result = mcp_server.analyze_requirements("Build a todo app for small teams.")
 
     parsed = RequirementsArtifact.model_validate_json(result)
 
     assert parsed == artifact
-    assert mock_requirements_client.responses.parse.call_count == 1
+    assert len(mock_requirements_agent.calls) == 1
 
 
 def test_refine_requirements_tool_passes_previous_artifact_as_context(
-    mock_requirements_client: MagicMock,
+    mock_requirements_agent: _FakeRequirementsAgent,
 ) -> None:
     previous = _requirements_artifact("Initial analysis.")
     refined = _requirements_artifact("Refined analysis.")
-
-    response = MagicMock()
-    response.output_parsed = refined
-    mock_requirements_client.responses.parse.return_value = response
+    mock_requirements_agent.artifact = refined
 
     result = mcp_server.refine_requirements(
         "Also support due dates.",
@@ -116,27 +153,22 @@ def test_refine_requirements_tool_passes_previous_artifact_as_context(
 
     assert parsed == refined
 
-    # The analyzer builds its prompt from `previous_artifact` — confirm the
-    # previous artifact's own summary made it into the prompt sent to the
-    # model, i.e. refine_requirements actually threaded `previous` through
-    # rather than analyzing `user_input` in isolation.
-    sent_input = mock_requirements_client.responses.parse.call_args.kwargs["input"]
-    sent_prompt = sent_input[1]["content"]
-    assert "Initial analysis." in sent_prompt
+    # Confirm refine_requirements actually threaded `previous` through to
+    # the agent, rather than analyzing `user_input` in isolation.
+    [(sent_input, sent_previous)] = mock_requirements_agent.calls
+    assert sent_input == "Also support due dates."
+    assert sent_previous == previous
 
 
 def test_refine_architecture_tool_passes_previous_design_as_context(
-    mock_design_client: MagicMock,
+    mock_design_agent: _FakeSystemDesignAgent,
 ) -> None:
     requirements = _requirements_artifact("A todo app for small teams.")
     previous_design = SystemDesignArtifact(
         architecture_summary="Original architecture."
     )
     refined_design = SystemDesignArtifact(architecture_summary="Refined architecture.")
-
-    response = MagicMock()
-    response.output_parsed = refined_design
-    mock_design_client.responses.parse.return_value = response
+    mock_design_agent.design = refined_design
 
     result = mcp_server.refine_architecture(
         "Add a notifications component.",
@@ -151,10 +183,12 @@ def test_refine_architecture_tool_passes_previous_design_as_context(
     # Confirm refine_architecture actually threaded the previous design
     # through as context, rather than generating a fresh architecture from
     # requirements alone.
-    sent_input = mock_design_client.responses.parse.call_args.kwargs["input"]
-    sent_prompt = sent_input[1]["content"]
-    assert "Original architecture." in sent_prompt
-    assert "Add a notifications component." in sent_prompt
+    [(sent_requirements, sent_previous, sent_refinement_input)] = (
+        mock_design_agent.calls
+    )
+    assert sent_requirements == requirements
+    assert sent_previous == previous_design
+    assert sent_refinement_input == "Add a notifications component."
 
 
 def test_mcp_validation_tool() -> None:

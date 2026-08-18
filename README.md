@@ -16,15 +16,31 @@ records (ADRs), and a unified architecture change history. See
 MVP-3 Completion" (just below it) for concrete next steps on each
 remaining item.
 
+Separately from the MVP feature roadmap, a **Clean Architecture
+migration is in progress** (Slices 1–2 of 8, done): the codebase is
+being re-layered into Domain / Application / Infrastructure /
+Presentation, and both the requirements-analysis and system-design-
+generation LLM calls now run on [Microsoft Agent
+Framework](https://github.com/microsoft/agent-framework) instead of a
+direct Azure OpenAI SDK call. This is an architecture/tech initiative
+orthogonal to the MVP roadmap above — it doesn't add or change
+user-facing capability, and doesn't block MVP-3 work landing in
+parallel. See "Clean Architecture Migration" under "Next Steps" for the
+full plan, what each slice did, and what's left.
+
 Capabilities implemented so far:
 
 * Natural-language requirements input
-* AI-powered requirements analysis
+* AI-powered requirements analysis — now running on Microsoft Agent
+  Framework behind a Clean Architecture layering (domain/application/
+  infrastructure); see "Next Steps" → "Clean Architecture Migration"
 * Structured requirements artifacts using Pydantic
 * Requirements refinement
 * Requirements versioning
 * Azure Blob Storage persistence
-* High-level system architecture generation
+* High-level system architecture generation — also now running on
+  Microsoft Agent Framework; see "Next Steps" → "Clean Architecture
+  Migration"
 * Structured architecture artifacts
 * Architecture semantic validation
 * Requirement-to-component traceability
@@ -64,6 +80,12 @@ Capabilities implemented so far:
   box, matched from the component's/dependency's name and
   responsibility/purpose text; see "Next Steps" → "Diagram Icons (Azure
   Architecture Icons)" below
+* Overlap-free, non-floating edge labels — a named edge's text renders
+  as its own reserved-space node directly on the connecting line,
+  instead of an auto-placed label that could land on top of a
+  neighboring node or float disconnected from its edge; see "Next
+  Steps" → "Diagram Label Placement (No More Overlapping/Floating
+  Text)" below
 * Stronger failure handling around architecture generation and validation
 * Azure Blob Storage for architecture artifacts
 * MCP adapter covering the full requirements-to-architecture flow —
@@ -912,7 +934,10 @@ The project is implemented as a staged requirements-to-design pipeline:
                    ┌─────────────────────────┐
                    │ Requirements Analyzer   │
                    │                         │
-                   │ Azure OpenAI            │
+                   │ Microsoft Agent         │
+                   │ Framework (Azure        │
+                   │ OpenAI) — see "Clean    │
+                   │ Architecture Migration" │
                    └────────────┬────────────┘
                                 │
                                 ▼
@@ -931,7 +956,10 @@ The project is implemented as a staged requirements-to-design pipeline:
                    ┌─────────────────────────┐
                    │ System Design Analyzer  │
                    │                         │
-                   │ Azure OpenAI            │
+                   │ Microsoft Agent         │
+                   │ Framework (Azure        │
+                   │ OpenAI) — see "Clean    │
+                   │ Architecture Migration" │
                    └────────────┬────────────┘
                                 │
                                 ▼
@@ -968,6 +996,19 @@ The architecture validator runs before an architecture is persisted. Invalid arc
 
 The architecture diagram represents both internal components and explicitly modeled external dependencies.
 
+The diagram above already reflects the first three slices of an
+in-progress architectural migration — see "Clean Architecture
+Migration" (in "Next Steps," below "Roadmap") for the full plan,
+rationale, and what's left. In short: requirements analysis,
+system-design generation, and image classification/diagram-image
+interpretation (`app/vision.py`) all now run on Microsoft Agent
+Framework instead of a direct Azure OpenAI SDK call, and the code
+behind each is now layered as Domain → Application → Infrastructure
+rather than one flat module apiece. The Architecture Validator and
+Diagram Generator boxes are unchanged so far — moving
+`app/design/models.py` into `app/domain/` is next in line, followed by
+the diagram generator itself becoming a port.
+
 ---
 
 ## Project Structure
@@ -976,18 +1017,36 @@ The architecture diagram represents both internal components and explicitly mode
 requirements-agent/
 ├── app/
 │   ├── main.py
-│   ├── models.py
-│   ├── analyzer.py
+│   ├── models.py         # DEPRECATED shim — re-exports app/domain/requirements.py
+│   ├── analyzer.py        # DEPRECATED sync facade — see "Clean Architecture Migration"
 │   ├── session.py
 │   ├── storage.py
 │   ├── config.py
 │   ├── ingestion.py
-│   ├── vision.py
+│   ├── vision.py          # DEPRECATED sync facade — see "Clean Architecture Migration"
+│   │
+│   ├── domain/                       # Clean Architecture: entities, zero I/O
+│   │   ├── __init__.py
+│   │   ├── requirements.py           # Requirement/Actor/.../RequirementsArtifact
+│   │   └── vision.py                 # ImageClassification
+│   │
+│   ├── application/                  # Clean Architecture: use cases + ports
+│   │   ├── __init__.py
+│   │   ├── ports.py                  # RequirementsAgentPort/SystemDesignAgentPort/
+│   │   │                             # ImageClassifierPort/DiagramImageInterpreterPort
+│   │   ├── errors.py                 # DesignGenerationError/ImageClassificationError/
+│   │   │                             # DiagramInterpretationError
+│   │   └── use_cases/
+│   │       ├── __init__.py
+│   │       ├── analyze_requirements.py
+│   │       ├── generate_system_design.py
+│   │       ├── classify_image.py
+│   │       └── interpret_diagram_image.py
 │   │
 │   ├── design/
 │   │   ├── __init__.py
 │   │   ├── models.py
-│   │   ├── analyzer.py
+│   │   ├── analyzer.py    # DEPRECATED sync facade — see "Clean Architecture Migration"
 │   │   ├── validator.py
 │   │   ├── diagram.py
 │   │   ├── comparison.py
@@ -1008,7 +1067,14 @@ requirements-agent/
 │   │
 │   ├── infrastructure/
 │   │   ├── __init__.py
-│   │   └── session_store.py
+│   │   ├── session_store.py
+│   │   └── agents/
+│   │       ├── __init__.py
+│   │       ├── requirements_agent.py    # Microsoft Agent Framework adapter
+│   │       ├── system_design_agent.py   # Microsoft Agent Framework adapter
+│   │       ├── image_classifier_agent.py          # Microsoft Agent Framework adapter
+│   │       ├── diagram_image_interpreter_agent.py # Microsoft Agent Framework adapter
+│   │       └── vision_support.py    # shared image-Content-part helper
 │   │
 │   ├── api/
 │   │   ├── __init__.py
@@ -1056,10 +1122,20 @@ requirements-agent/
 │
 ├── tests/
 │   ├── test_analyzer.py
+│   ├── test_analyze_requirements_use_case.py
+│   ├── test_infrastructure_requirements_agent.py
 │   ├── test_storage.py
 │   ├── test_refinement.py
 │   ├── test_ingestion.py
 │   ├── test_design_analyzer.py
+│   ├── test_generate_system_design_use_case.py
+│   ├── test_infrastructure_system_design_agent.py
+│   ├── test_vision.py
+│   ├── test_classify_image_use_case.py
+│   ├── test_interpret_diagram_image_use_case.py
+│   ├── test_infrastructure_image_classifier_agent.py
+│   ├── test_infrastructure_diagram_image_interpreter_agent.py
+│   ├── test_infrastructure_vision_support.py
 │   ├── test_design_validator.py
 │   ├── test_design_diagram.py
 │   ├── test_design_storage.py
@@ -1515,12 +1591,16 @@ full history and reasoning; summarized here:**
   `rank=same` grid) — see "Architecture Diagram Clustering & Clutter
   Reduction" for why a `rank=same` grid isn't used here.
 * Edges route as straight, right-angle lines (`splines="ortho"`) rather
-  than curved splines, and carry their name as an `xlabel` (not `label`
-  — `dot` doesn't position plain `label` text correctly on orthogonal
-  edges) — suppressed above `ArchitectureDiagramGenerator
-  .MAX_LABELED_EDGES` total edges to avoid cluttering a dense diagram
-  with dozens of small text strings; full detail remains available via
-  each edge's tooltip regardless.
+  than curved splines. A named edge (an interface, or the first "used
+  by" edge into a given dependency) is split into two edges through an
+  intermediate borderless `shape="plaintext"` label node
+  (`_add_labeled_edge` in `app/design/diagram.py`) rather than carrying
+  the name as a plain Graphviz `xlabel` — see "Diagram Label Placement
+  (No More Overlapping/Floating Text)" below for why. Naming is
+  suppressed above `ArchitectureDiagramGenerator.MAX_LABELED_EDGES`
+  total edges to avoid cluttering a dense diagram with dozens of small
+  text strings (in which case it's a single plain edge, no label node);
+  full detail remains available via each edge's tooltip regardless.
 * Component-to-external-dependency ("used by") edges are dashed and
   dependency-colored, visually distinct from interface edges at a glance
   rather than only distinguishable by reading their labels; only the
@@ -1891,6 +1971,24 @@ ruff check .
 pytest -v
 ```
 
+If `mypy . --strict` fails with something like `Type statement is only
+supported in Python 3.12 and greater` pointing at a file under
+`numpy/__init__.pyi`, that's not a bug in this project's code — this
+project has no dependency on numpy at all, direct or transitive.
+`openai`'s package internals do a `TYPE_CHECKING`-guarded `import numpy`
+(for optional embedding helpers this project doesn't use), so if numpy
+merely happens to be *installed somewhere in the same environment* mypy
+runs in (e.g. a shared venv that also has data-science tooling), mypy
+will try to resolve and fully parse whatever numpy stub is sitting
+there — and some numpy versions' stubs use newer syntax than this
+project's `python_version = "3.11"` mypy target supports, which is a
+hard parse error that aborts the whole run. `pyproject.toml` already
+has a `[[tool.mypy.overrides]]` entry with `module = ["numpy",
+"numpy.*"]` and `follow_imports = "skip"` to prevent this — if you hit
+it anyway, confirm you're on the version of `pyproject.toml` that
+includes it (this was added alongside the Microsoft Agent Framework
+migration, see "Next Steps" → "Clean Architecture Migration").
+
 ---
 
 # Testing
@@ -2227,6 +2325,245 @@ The result is a requirements-to-architecture pipeline that is structured, valida
 # Next Steps
 
 The next development phase should focus on moving from **MVP-2 architecture generation** toward a more complete, traceable, and refinement-oriented system design workflow.
+
+## Clean Architecture Migration
+
+**In progress — Slices 1–3 of 8 done.** A separate, ongoing initiative (not part
+of the MVP-3 feature checklist above) to re-layer the backend as Clean
+Architecture and move the project's AI calls onto [Microsoft Agent
+Framework](https://github.com/microsoft/agent-framework) — Microsoft's
+unified successor to Semantic Kernel and AutoGen, combining Semantic
+Kernel's enterprise features (typed, session-based state; middleware;
+telemetry) with AutoGen's simpler multi-agent abstractions.
+
+Why both changes together: adopting Agent Framework means every
+LLM-calling module needs to change anyway, which is the natural moment
+to also stop depending directly on `openai`/`agent_framework`/
+`azure.storage.blob`/etc. from the same modules that hold business
+logic, and instead depend on an abstraction it owns.
+
+**Target layering** (Clean Architecture / the Dependency Rule — inner
+layers never import outer ones):
+
+```text
+app/domain/            Entities & value objects. Zero I/O, zero framework
+                        deps beyond Pydantic. E.g. RequirementsArtifact.
+
+app/application/       Use cases + ports (Protocols). Depends only on
+                        domain. Defines the *shape* infrastructure must
+                        implement (e.g. RequirementsAgentPort) without
+                        importing any concrete SDK.
+
+app/infrastructure/    Concrete adapters implementing application ports:
+                        Microsoft Agent Framework agents, Azure Blob
+                        Storage, Cosmos DB, Graphviz, Azure Document
+                        Intelligence. Depends on application + domain.
+
+app/api/, app/web/,    Presentation. FastAPI routes, the CLI, and the
+app/main.py, app/mcp/  MCP server — construct use cases (wired to real
+                        infrastructure adapters) and call them. Depends
+                        on application + domain; talks to infrastructure
+                        only through application's ports.
+```
+
+**Slice 1 (done) — Requirements analysis, end to end:**
+
+* `app/domain/requirements.py` — `Requirement`, `Actor`, `Assumption`,
+  `OpenQuestion`, `RequirementsArtifact`, `StoredArtifact`, moved out of
+  `app/models.py` verbatim. `app/models.py` is now a deprecated
+  re-export shim (still used by most of the codebase — see below) so
+  this slice didn't require updating every importer at once.
+* `app/application/ports.py` — `RequirementsAgentPort`, a `Protocol`
+  with one method (`analyze`). `app/application/use_cases
+  /analyze_requirements.py` — `AnalyzeRequirementsUseCase`, pure
+  orchestration against that port, no knowledge of Azure or Agent
+  Framework.
+* `app/infrastructure/agents/requirements_agent.py` —
+  `AgentFrameworkRequirementsAgent`, a `RequirementsAgentPort`
+  implementation backed by a Microsoft Agent Framework `Agent`. This
+  replaces the direct `openai.OpenAI().responses.parse(...,
+  text_format=RequirementsArtifact)` call the project used before.
+  Structured output uses `ChatOptions(response_format=RequirementsArtifact)`
+  passed to `Agent.run(...)`, reading the parsed instance off
+  `AgentResponse.value` — see that module's docstring for wiring notes,
+  including why `agent_framework.openai.OpenAIChatClient` is used
+  rather than an `AzureOpenAIChatClient` (removed upstream; current
+  Microsoft guidance routes Azure OpenAI through the OpenAI-provider
+  client with an explicit `base_url`/`azure_endpoint`).
+* `app/analyzer.py`'s `RequirementsAnalyzer` is now a **backward-compatible
+  facade** over the above — a "strangler fig" seam so the many existing
+  synchronous call sites (`app/main.py`, `app/session.py`,
+  `app/api/dependencies.py`, `app/mcp/server.py`) didn't all need to
+  change in this slice. It gained an `analyze_async` method for
+  `async def` callers — `Agent.run` is async, and `asyncio.run()`
+  cannot nest inside an already-running event loop, so the two `async
+  def` upload routes (`start_run_from_upload`/`refine_run_from_upload`
+  in `app/api/routes/requirements.py`) now call `analyze_async`
+  directly while the two sync routes (`start_run`/`refine_run`, which
+  FastAPI runs in a worker thread) keep calling the sync `analyze`.
+* New dependencies: `agent-framework-core==1.14.0` and
+  `agent-framework-openai==1.13.0` — pinned individually rather than
+  the `agent-framework` meta-package, which pulls in ~30 optional
+  provider integrations (Anthropic, Bedrock, Gemini, Redis, ...) this
+  project doesn't use.
+* New tests: `tests/test_analyze_requirements_use_case.py` (use case
+  against a fake port), `tests/test_infrastructure_requirements_agent.py`
+  (the Agent Framework adapter, with the underlying `Agent`/
+  `OpenAIChatClient` faked out — no real network call, no Azure
+  credentials needed), and `tests/test_analyzer.py`/`tests/test_mcp.py`
+  updated to inject a fake `RequirementsAgentPort` instead of mocking
+  the old raw OpenAI client shape.
+
+**Slice 2 (done) — System design generation/refinement, end to end:**
+
+* `app/application/ports.py` gained `SystemDesignAgentPort` (method
+  `generate`), the design-generation analogue of `RequirementsAgentPort`.
+  Its `SystemDesignArtifact` parameter/return type still comes from
+  `app.design.models` rather than `app.domain` — that move is its own
+  remaining slice (see below) — documented inline in `ports.py` as a
+  deliberate, temporary compromise rather than an oversight.
+* `app/application/errors.py` (new) — `DesignGenerationError`, moved
+  out of `app/design/analyzer.py` so both the application and
+  infrastructure layers can raise/import it without a circular
+  dependency back into the presentation-facing facade module.
+* `app/application/use_cases/generate_system_design.py` —
+  `GenerateSystemDesignUseCase`, pure orchestration against
+  `SystemDesignAgentPort`, mirroring `AnalyzeRequirementsUseCase`.
+* `app/infrastructure/agents/system_design_agent.py` —
+  `AgentFrameworkSystemDesignAgent`, replacing the direct
+  `openai.OpenAI().responses.parse(..., text_format=SystemDesignArtifact)`
+  call with a Microsoft Agent Framework `Agent`, same wiring as Slice 1's
+  requirements agent (`OpenAIChatClient` + `base_url` routing +
+  `ChatOptions(response_format=...)`). The full architecture-generation
+  prompt (domain clustering instructions, the external-dependency/
+  interface constraint, etc.) moved here verbatim from the old
+  `SystemDesignAnalyzer._build_prompt`.
+* `app/design/analyzer.py`'s `SystemDesignAnalyzer` is now a
+  backward-compatible facade, same strangler-fig shape as
+  `app/analyzer.py`'s `RequirementsAnalyzer` — sync `analyze()` (used by
+  every current call site: `app/main.py`, `app/design/session.py`,
+  `app/mcp/server.py`, and the web API's `accept_run`/
+  `refine_architecture` routes, all of which are sync `def`s) plus an
+  `analyze_async()` for symmetry, even though no `async def` caller
+  needs it yet.
+* New tests: `tests/test_generate_system_design_use_case.py`,
+  `tests/test_infrastructure_system_design_agent.py` (includes the
+  interface-vs-external-dependency prompt regression test, moved here
+  from `tests/test_design_analyzer.py` along with the prompt itself),
+  and `tests/test_design_analyzer.py`/`tests/test_mcp.py` updated to
+  inject a fake `SystemDesignAgentPort`.
+
+**Slice 3 (done) — Image classification & diagram-image interpretation,
+end to end:**
+
+* `app/domain/vision.py` — `ImageClassification`, moved out of
+  `app/vision.py` verbatim, the same "pure entity, zero I/O" home
+  `app.domain.requirements` already gives Slice 1's entities.
+* `app/application/errors.py` gained `ImageClassificationError` and
+  `DiagramInterpretationError`, moved out of `app/vision.py` for the same
+  reason Slice 2 moved `DesignGenerationError` out of
+  `app/design/analyzer.py`.
+* `app/application/ports.py` gained `ImageClassifierPort` (method
+  `classify`) and `DiagramImageInterpreterPort` (method `interpret`).
+  `app/application/use_cases/classify_image.py` —
+  `ClassifyImageUseCase` — and `app/application/use_cases
+  /interpret_diagram_image.py` — `InterpretDiagramImageUseCase` — are
+  pure orchestration against those ports, mirroring Slices 1–2's use
+  cases.
+* `app/infrastructure/agents/image_classifier_agent.py` —
+  `AgentFrameworkImageClassifierAgent` — and `app/infrastructure/agents
+  /diagram_image_interpreter_agent.py` —
+  `AgentFrameworkDiagramImageInterpreterAgent` — replace the direct
+  `openai.OpenAI().responses.parse(...)` calls (with `input_text`/
+  `input_image` content parts) the project used before. This slice
+  needed one thing Slices 1–2 didn't: multimodal input. Microsoft Agent
+  Framework represents that as an `agent_framework.Message(role="user",
+  contents=[...])` mixing a `Content.from_text(...)` prompt part with a
+  `Content.from_data(...)` image part, passed to `Agent.run(...)`
+  directly in place of a plain string prompt — see either adapter's
+  docstring, and the shared `app/infrastructure/agents
+  /vision_support.py` helper (`image_content`) that builds the image
+  `Content` part from an upload's raw bytes and filename extension
+  (factored out once, used by both adapters, rather than duplicated).
+* `app/vision.py`'s `ImageInputClassifier`/`DiagramImageInterpreter` are
+  now backward-compatible facades, same strangler-fig shape as
+  `app/analyzer.py`/`app/design/analyzer.py` — each gained an
+  `..._async` method (`classify_async`/`interpret_async`) for `async
+  def` callers. This one mattered immediately, not just for symmetry:
+  `app/api/routes/requirements.py`'s `_resolve_image_upload` (itself
+  `async def`, invoked via `await` from the already-running-on-the-
+  event-loop upload routes) previously called the old classes' sync
+  `classify`/`interpret` directly — harmless when they wrapped a
+  blocking-but-not-loop-touching `openai.OpenAI()` call, but exactly the
+  Slice 1 `asyncio.run()`-inside-a-running-loop crash waiting to happen
+  once `interpret`/`classify` became `asyncio.run()`-bridged sync
+  facades over an async `Agent.run`. Caught before shipping (see Slice
+  1's own writeup of the same bug class) — `_resolve_image_upload` now
+  calls `classify_async`/`interpret_async` instead.
+* New tests: `tests/test_classify_image_use_case.py`,
+  `tests/test_interpret_diagram_image_use_case.py`,
+  `tests/test_infrastructure_image_classifier_agent.py`,
+  `tests/test_infrastructure_diagram_image_interpreter_agent.py`
+  (Agent Framework adapters with the underlying `Agent`/
+  `OpenAIChatClient` faked out — no real network call, no Azure
+  credentials needed), `tests/test_infrastructure_vision_support.py`
+  (the shared image-`Content` helper's extension-to-MIME-type mapping),
+  `tests/test_vision.py` (new — the facade classes had no dedicated test
+  file before this slice), and `tests/test_requirements_routes.py`'s
+  `fakes()` fixture updated to wire `classify_async`/`interpret_async`
+  the same way it already wired `analyze_async` in Slice 1.
+
+**What's temporarily duplicated/deprecated on purpose** (strangler fig,
+not sloppiness — each will be removed in a later slice once nothing
+imports the old path):
+
+* `app/models.py` — re-exports `app.domain.requirements`. Still
+  imported by `app/storage.py`, `app/api/routes/requirements.py`,
+  `app/mcp/server.py`, `app/session.py`, and most of `tests/`.
+* `app/analyzer.py` — the requirements-analysis sync/async facade. Still
+  imported by every requirements-analysis call site.
+* `app/design/analyzer.py` — the design-generation sync/async facade.
+  Still imported by every design-generation call site.
+* `app/vision.py` — the image-classification/diagram-interpretation
+  sync/async facades. Still imported by `app/api/dependencies.py`.
+
+**Remaining slices**, each a bounded vertical slice like Slices 1–3 (a 
+capability moved through all four layers, tests updated, README kept
+current — not a scattershot refactor):
+
+1. **Move `app/design/models.py` into `app/domain/`** alongside
+   Slice 1's `app/domain/requirements.py`, as its own bounded context
+   module (e.g. `app/domain/design.py`) — also removes the interim
+   `app.application.ports`/`app.application.use_cases
+   .generate_system_design`/`interpret_diagram_image` dependency on
+   `app.design.models` noted above.
+2. **Migrate remaining importers off `app/models.py`**, then delete it.
+3. **Migrate `app/analyzer.py`/`app/design/analyzer.py`/`app/vision.py`'s
+   call sites onto their use cases directly** (constructed via a
+   composition root in `app/api/dependencies.py`/`app/mcp/server.py`/
+   `app/main.py`), then delete all three facade modules.
+4. **Ports + adapters for storage** — `ArtifactStorePort`/
+   `SessionStorePort` in `app/application/ports.py`, with
+   `app/storage.py`'s `ArtifactStore` and
+   `app/infrastructure/session_store.py`'s Cosmos store becoming
+   their concrete `app/infrastructure/` implementations (mostly a move
+   + an explicit `Protocol`, since both are already reasonably
+   isolated).
+5. **Diagram generation as a port** — `DiagramRendererPort` wrapping
+   `app/design/diagram.py`'s `ArchitectureDiagramGenerator`, so use
+   cases depend on the abstraction rather than importing Graphviz
+   directly.
+
+Each slice should ship the same way Slices 1–3 did: real code backed by a
+verified library API (not just documentation — Microsoft's own docs
+disagreed with each other about `agent_framework` class names across
+pages during this migration; the installed package was checked
+directly with `python -c "import agent_framework; ..."` to confirm),
+full test coverage with fakes at the port boundary (no real network
+calls in unit tests), a green `pytest`/`ruff`/`mypy --strict`/`pyright`
+run, and this README updated in the same round — not deferred to "later."
+
+---
 
 ## 1. Architecture Refinement
 
@@ -2607,14 +2944,20 @@ classifies every uploaded image first and routes it accordingly:
 
 Implemented:
 
-* `app/vision.py` (new) — `ImageInputClassifier.classify(content,
-  filename) -> ImageClassification` (`kind: "document" | "diagram"` plus
-  a one-sentence `reasoning`) and `DiagramImageInterpreter.interpret(...)
-  -> SystemDesignArtifact`, both calling Azure OpenAI's Responses API
-  with multimodal input (an `input_image` data URL alongside
-  `input_text`) against the same vision-capable `AZURE_OPENAI_MODEL`
-  deployment every other analyzer already requires — no new environment
-  variable. `DiagramImageInterpreter` reuses the exact
+* `app/vision.py` — `ImageInputClassifier.classify(content, filename) ->
+  ImageClassification` (`kind: "document" | "diagram"` plus a
+  one-sentence `reasoning`) and `DiagramImageInterpreter.interpret(...)
+  -> SystemDesignArtifact` against the same vision-capable
+  `AZURE_OPENAI_MODEL` deployment every other analyzer already requires
+  — no new environment variable. As of Clean Architecture Migration
+  Slice 3 (see "Next Steps" → "Clean Architecture Migration"), both are
+  backward-compatible sync/async facades over Microsoft Agent Framework
+  `Agent`s (`app/infrastructure/agents/image_classifier_agent.py` /
+  `diagram_image_interpreter_agent.py`) rather than a direct Azure
+  OpenAI Responses API call — multimodal input now goes through an
+  `agent_framework.Message` mixing a text `Content` part with an image
+  `Content` part, instead of `input_text`/`input_image` Responses API
+  content items. `DiagramImageInterpreter` reuses the exact
   `SystemDesignArtifact` schema `SystemDesignAnalyzer` produces from
   text, so an image-derived design is indistinguishable downstream
   (validation, diagram rendering, versioning, refinement, approval) from
@@ -2768,6 +3111,65 @@ column-per-cluster foundation above:
   Graphviz-quirk story on the node side).
 * **Real Azure service icons per node** — see "Diagram Icons (Azure
   Architecture Icons)" directly below.
+
+---
+
+## Diagram Label Placement (No More Overlapping/Floating Text)
+
+**Done.**
+
+**Problem:** a real generated diagram was reported with two distinct
+text-placement defects: an edge's name (`xlabel`) rendered directly on
+top of a neighboring node's icon/caption, and — separately — another
+edge's name rendered visibly disconnected from the line it named,
+floating with no visual tie to its edge. Both trace back to `xlabel`
+being Graphviz's "exterior label" — auto-placed near an edge without
+reserving any layout space for it, unlike a real node.
+
+**Investigation and rejected fix:** Graphviz's own `forcelabels` graph
+attribute defaults to `true`, which places every `xlabel` "even if
+there is some overlap with nodes or other labels" (straight from its
+docs) — the direct cause of the overlap defect. Setting
+`forcelabels="false"` looked like the obvious fix (`dot` drops a
+conflicting label instead of forcing an overlapping placement), and
+combined with the edge attribute `decorate="true"` (draws a connector
+line from a placed label back to its edge) it also solved the floating
+defect — confirmed visually against several reproduction diagrams,
+including a scaled-up one matching the density of the originally
+reported case. It was ultimately **rejected**, though: with
+`rankdir="LR"` (required for this diagram's left-to-right flow), the
+project's installed Graphviz version (`dot` 2.42/2.43) drops *every*
+exterior label with `forcelabels="false"` set — reproduced down to a
+trivial two-node, one-edge diagram with the entire canvas empty, so
+it's a real layout-engine limitation tied to `rankdir="LR"`, not an
+actual spacing/overlap problem (increasing `nodesep`/`ranksep` had zero
+effect). Shipping it would have silently emptied every edge label on
+every diagram.
+
+**Fix actually shipped:** `ArchitectureDiagramGenerator._add_labeled_edge`
+(`app/design/diagram.py`) splits a named edge into two:
+`source -> label node -> target`, where the label node is a borderless,
+fill-less `shape="plaintext"` node whose only content is the edge's
+name. Because it's a real node, Graphviz's core layout — not the
+exterior-label heuristic — reserves genuine rank/column space for it
+and guarantees no other node overlaps it, exactly like every
+component/dependency icon node already gets. It still visibly sits *on*
+the connecting line (it has a real inbound and outbound edge segment
+either side of it), so it reads unambiguously as that interface's name
+rather than a floating annotation — no `decorate` trick needed. An
+unnamed edge (name suppressed past `MAX_LABELED_EDGES`, or a dependency
+edge past the first into a shared dependency) still renders as a single
+plain edge, unchanged. See `_add_labeled_edge`'s docstring for the full
+investigation, and `test_diagram_labeled_interface_uses_a_label_node_not_an_xlabel`
+in `tests/test_design_diagram.py` for the regression test.
+
+As a side effect, this also fixed a hidden reliability issue the
+`forcelabels`/`xlabel` approach never surfaced clearly: on denser
+diagrams, `dot`'s exterior-label placement can silently drop a
+majority of labels even when `forcelabels="true"` finds no fully clear
+spot for them (it just overlaps instead). The label-node approach never
+drops a name — every interface/dependency name that should be shown is
+shown, every time.
 
 ---
 

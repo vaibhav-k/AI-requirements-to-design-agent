@@ -1,4 +1,4 @@
-"""Image input classification for uploaded PNG/JPG/JPEG files.
+"""Backward-compatible synchronous facade for image input classification.
 
 An uploaded image can mean two very different things to this pipeline:
 
@@ -22,27 +22,64 @@ refinement, approval) treats an image-derived design exactly like a
 text-derived one. See ``app/api/routes/requirements.py``'s upload routes
 for how the two are wired together.
 
-Both classes use the Responses API's multimodal input (an ``input_image``
-content part alongside ``input_text``), which requires a vision-capable
-Azure OpenAI deployment — the same ``AZURE_OPENAI_MODEL`` every other
-analyzer in this project already requires, so no new environment variable
-is introduced here.
+As of this slice of the Clean Architecture migration (see README →
+"Clean Architecture Migration"), the real work happens in:
+
+* ``app.domain.vision`` — the ``ImageClassification`` entity (moved out
+  of this module, verbatim)
+* ``app.application.ports.ImageClassifierPort`` /
+  ``DiagramImageInterpreterPort`` — the abstractions
+* ``app.application.use_cases.classify_image.ClassifyImageUseCase`` /
+  ``app.application.use_cases.interpret_diagram_image
+  .InterpretDiagramImageUseCase`` — the orchestration
+* ``app.infrastructure.agents.image_classifier_agent
+  .AgentFrameworkImageClassifierAgent`` /
+  ``app.infrastructure.agents.diagram_image_interpreter_agent
+  .AgentFrameworkDiagramImageInterpreterAgent`` — the concrete adapters,
+  now backed by Microsoft Agent Framework instead of a direct OpenAI SDK
+  call (multimodal image input via ``agent_framework.Message``/
+  ``Content`` — see either adapter's docstring for the full rationale)
+
+``ImageInputClassifier``/``DiagramImageInterpreter`` exist only so the
+existing synchronous call sites (``app/api/dependencies.py``) don't all
+need to change in the same slice — the same "strangler fig" seam
+``app/analyzer.py``/``app/design/analyzer.py`` use for requirements/design
+analysis. New code should depend on ``ClassifyImageUseCase``/
+``InterpretDiagramImageUseCase`` + their ports directly rather than
+adding new usages of these facades.
 """
 
 from __future__ import annotations
 
-import base64
+import asyncio
 import os
-from typing import Literal
 
 from dotenv import load_dotenv
-from openai import OpenAI
-from openai.types.responses import ResponseInputItemParam
-from pydantic import BaseModel, Field
 
+from app.application.errors import DiagramInterpretationError, ImageClassificationError
+from app.application.ports import DiagramImageInterpreterPort, ImageClassifierPort
+from app.application.use_cases.classify_image import ClassifyImageUseCase
+from app.application.use_cases.interpret_diagram_image import (
+    InterpretDiagramImageUseCase,
+)
 from app.design.models import SystemDesignArtifact
+from app.domain.vision import ImageClassification
+from app.infrastructure.agents.diagram_image_interpreter_agent import (
+    AgentFrameworkDiagramImageInterpreterAgent,
+)
+from app.infrastructure.agents.image_classifier_agent import (
+    AgentFrameworkImageClassifierAgent,
+)
 
 load_dotenv()
+
+__all__ = [
+    "DiagramImageInterpreter",
+    "DiagramInterpretationError",
+    "ImageClassification",
+    "ImageClassificationError",
+    "ImageInputClassifier",
+]
 
 
 def _required_environment_variable(name: str) -> str:
@@ -61,129 +98,108 @@ AZURE_OPENAI_ENDPOINT = _required_environment_variable("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_MODEL = _required_environment_variable("AZURE_OPENAI_MODEL")
 
 
-_EXTENSION_TO_MIME = {"jpg": "jpeg"}
+def _raise_if_running_loop(caller: str) -> None:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
 
-
-def _data_url(content: bytes, filename: str) -> str:
-    """A ``data:`` URL for an uploaded image's raw bytes — the Responses
-    API's ``input_image`` content part accepts either a hosted URL or an
-    inline data URL; inline avoids needing anywhere to host the file first,
-    matching how everything else in this project keeps an upload's bytes
-    in memory for the duration of one request."""
-
-    extension = os.path.splitext(filename)[1].lower().lstrip(".") or "png"
-    mime = _EXTENSION_TO_MIME.get(extension, extension)
-    encoded = base64.b64encode(content).decode("ascii")
-    return f"data:image/{mime};base64,{encoded}"
-
-
-class ImageClassification(BaseModel):
-    """Result of classifying an uploaded image — see the module docstring."""
-
-    kind: Literal["document", "diagram"]
-    reasoning: str = Field(
-        description="One sentence explaining why this image was classified this way."
+    raise RuntimeError(
+        f"{caller}() cannot be called from a running event loop — "
+        f"await {caller.split('.')[-1]}_async() instead."
     )
-
-
-class ImageClassificationError(RuntimeError):
-    """Raised when an uploaded image can't be classified."""
-
-
-class DiagramInterpretationError(RuntimeError):
-    """Raised when a diagram image can't be interpreted into an architecture."""
 
 
 class ImageInputClassifier:
     """Classifies an uploaded image as a document screenshot or a system
-    design/workflow diagram."""
+    design/workflow diagram (sync facade)."""
 
-    def __init__(self, model: str = AZURE_OPENAI_MODEL) -> None:
-        self.client = OpenAI(
-            api_key=AZURE_OPENAI_API_KEY,
-            base_url=AZURE_OPENAI_ENDPOINT.rstrip("/") + "/",
+    def __init__(
+        self,
+        model: str = AZURE_OPENAI_MODEL,
+        agent: ImageClassifierPort | None = None,
+    ) -> None:
+        """``agent`` is injectable — pass a fake/mock ``ImageClassifierPort``
+        in tests instead of constructing a real Microsoft Agent Framework
+        agent (and therefore requiring live Azure OpenAI credentials)."""
+
+        resolved_agent: ImageClassifierPort = agent or (
+            AgentFrameworkImageClassifierAgent(
+                api_key=AZURE_OPENAI_API_KEY,
+                endpoint=AZURE_OPENAI_ENDPOINT,
+                model=model,
+            )
         )
-        self.model = model
+
+        self._use_case = ClassifyImageUseCase(agent=resolved_agent)
+
+    async def classify_async(
+        self, content: bytes, filename: str
+    ) -> ImageClassification:
+        """The native, non-bridged entry point — use this from any
+        ``async def`` caller (e.g. ``app/api/routes/requirements.py``'s
+        upload routes, which already run on the event loop) instead of
+        ``classify()``, which cannot be called from inside a running
+        event loop."""
+
+        return await self._use_case.execute(content, filename)
 
     def classify(self, content: bytes, filename: str) -> ImageClassification:
         """Classify ``content`` (an uploaded image's raw bytes) as a
-        ``"document"`` screenshot or a ``"diagram"``."""
+        ``"document"`` screenshot or a ``"diagram"``.
 
-        # Explicitly typed as `list[ResponseInputItemParam]` — the exact
-        # element type `responses.parse`'s `input` parameter expects
-        # (rather than left for Pyright to infer from the literal, or
-        # annotated as `list[EasyInputMessageParam]`, one member of that
-        # union: `list` is invariant, so a `list[EasyInputMessageParam]`
-        # doesn't type-check as a `list[ResponseInputItemParam]` even
-        # though every `EasyInputMessageParam` *is* one). This also
-        # makes the user message's `content` — a list of
-        # input_text/input_image parts, not a plain string like the
-        # system message's — type-check against
-        # `EasyInputMessageParam.content`'s
-        # `str | list[ResponseInputTextParam | ResponseInputImageParam |
-        # ResponseInputFileParam]` union instead of widening to a bare
-        # `dict[str, ...]` that matches none of `responses.parse`'s
-        # accepted input item types.
-        messages: list[ResponseInputItemParam] = [
-            {
-                "role": "system",
-                "content": (
-                    "You classify an uploaded image for a "
-                    "requirements-to-design tool. Decide whether it is:\n\n"
-                    "(a) 'document' — a screenshot or photo of TEXT meant "
-                    "to be read: requirements notes, an email, a spec, a "
-                    "whiteboard of bullet points, a form, a table, a "
-                    "written note. Even if it contains a few small boxes "
-                    "or icons, classify it as 'document' if its primary "
-                    "content is prose or lists of text.\n\n"
-                    "(b) 'diagram' — a SYSTEM DESIGN or WORKFLOW DIAGRAM: "
-                    "boxes/nodes connected by arrows depicting components, "
-                    "services, data flow, a sequence, or an architecture, "
-                    "meant to be understood as a structural drawing rather "
-                    "than read as prose."
-                ),
-            },
-            {
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": "Classify this image."},
-                    {
-                        "type": "input_image",
-                        "image_url": _data_url(content, filename),
-                        "detail": "auto",
-                    },
-                ],
-            },
-        ]
+        Synchronous on purpose — see ``RequirementsAnalyzer.analyze``'s
+        docstring for why, and why this raises ``RuntimeError`` instead
+        of deadlocking/crashing confusingly if called from a running
+        event loop.
+        """
 
-        try:
-            response = self.client.responses.parse(
-                model=self.model,
-                input=messages,
-                text_format=ImageClassification,
-            )
-        except Exception as exc:
-            raise ImageClassificationError(
-                "Azure OpenAI could not classify the uploaded image."
-            ) from exc
+        _raise_if_running_loop("ImageInputClassifier.classify")
 
-        if response.output_parsed is None:
-            raise ImageClassificationError(
-                "Azure OpenAI returned no image classification."
-            )
-
-        return response.output_parsed
+        return asyncio.run(self._use_case.execute(content, filename))
 
 
 class DiagramImageInterpreter:
-    """Derives a structured system design directly from a diagram image."""
+    """Derives a structured system design directly from a diagram image
+    (sync facade)."""
 
-    def __init__(self, model: str = AZURE_OPENAI_MODEL) -> None:
-        self.client = OpenAI(
-            api_key=AZURE_OPENAI_API_KEY,
-            base_url=AZURE_OPENAI_ENDPOINT.rstrip("/") + "/",
+    def __init__(
+        self,
+        model: str = AZURE_OPENAI_MODEL,
+        agent: DiagramImageInterpreterPort | None = None,
+    ) -> None:
+        """``agent`` is injectable — pass a fake/mock
+        ``DiagramImageInterpreterPort`` in tests instead of constructing a
+        real Microsoft Agent Framework agent (and therefore requiring live
+        Azure OpenAI credentials)."""
+
+        resolved_agent: DiagramImageInterpreterPort = agent or (
+            AgentFrameworkDiagramImageInterpreterAgent(
+                api_key=AZURE_OPENAI_API_KEY,
+                endpoint=AZURE_OPENAI_ENDPOINT,
+                model=model,
+            )
         )
-        self.model = model
+
+        self._use_case = InterpretDiagramImageUseCase(agent=resolved_agent)
+
+    async def interpret_async(
+        self,
+        content: bytes,
+        filename: str,
+        previous_design: SystemDesignArtifact | None = None,
+        notes: str | None = None,
+    ) -> SystemDesignArtifact:
+        """The native, non-bridged entry point — use this from any
+        ``async def`` caller instead of ``interpret()``, which cannot be
+        called from inside a running event loop."""
+
+        return await self._use_case.execute(
+            content,
+            filename,
+            previous_design=previous_design,
+            notes=notes,
+        )
 
     def interpret(
         self,
@@ -199,114 +215,20 @@ class DiagramImageInterpreter:
         design rather than replacing it wholesale, the same "preserve what
         still applies" contract ``SystemDesignAnalyzer.analyze`` follows
         for text-based refinement.
+
+        Synchronous on purpose — see ``RequirementsAnalyzer.analyze``'s
+        docstring for why, and why this raises ``RuntimeError`` instead
+        of deadlocking/crashing confusingly if called from a running
+        event loop.
         """
 
-        prompt_text = self._build_prompt(previous_design, notes)
+        _raise_if_running_loop("DiagramImageInterpreter.interpret")
 
-        # See `ImageInputClassifier.classify`'s `messages` comment for why
-        # this needs an explicit `list[ResponseInputItemParam]`
-        # annotation rather than being inlined into the
-        # `responses.parse(input=...)` call directly.
-        messages: list[ResponseInputItemParam] = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a senior software architect. Look at the "
-                    "supplied system design / workflow diagram image and "
-                    "redraw it as a clean, well-architected system design: "
-                    "identify every component, interface, and external "
-                    "dependency it depicts, correct anything that is "
-                    "structurally unclear, redundant, or inconsistent, and "
-                    "return the requested structured architecture — not a "
-                    "description of the image."
-                ),
-            },
-            {
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": prompt_text},
-                    {
-                        "type": "input_image",
-                        "image_url": _data_url(content, filename),
-                        "detail": "auto",
-                    },
-                ],
-            },
-        ]
-
-        try:
-            response = self.client.responses.parse(
-                model=self.model,
-                input=messages,
-                text_format=SystemDesignArtifact,
+        return asyncio.run(
+            self._use_case.execute(
+                content,
+                filename,
+                previous_design=previous_design,
+                notes=notes,
             )
-        except Exception as exc:
-            raise DiagramInterpretationError(
-                "Azure OpenAI could not interpret the uploaded diagram."
-            ) from exc
-
-        if response.output_parsed is None:
-            raise DiagramInterpretationError(
-                "Azure OpenAI returned no parsed system design from the diagram."
-            )
-
-        return response.output_parsed
-
-    @staticmethod
-    def _build_prompt(
-        previous_design: SystemDesignArtifact | None,
-        notes: str | None,
-    ) -> str:
-        refinement_context = ""
-
-        if previous_design is not None:
-            refinement_context = f"""
-This image refines a previously generated architecture rather than
-replacing it outright.
-
-Previous architecture:
-
-{previous_design.model_dump_json(indent=2)}
-
-Preserve components, interfaces, and external dependencies that are still
-consistent with the image; apply whatever the image adds or changes. Do
-not silently remove or rename existing components, interfaces, or
-dependencies unless the image clearly calls for it. Preserve each
-existing component's "domain" string exactly as-is unless the image
-clearly moves it to a different group; give any newly added component a
-domain consistent with the existing set.
-"""
-
-        notes_context = (
-            f"\nAdditional notes from the uploader:\n{notes}\n" if notes else ""
         )
-
-        return f"""
-Examine the attached image of a system design or workflow diagram.
-{refinement_context}{notes_context}
-Identify:
-
-- Every major logical component depicted (boxes/nodes), each with a
-  unique ID, a name, and its responsibility.
-- Each component's "domain" — a short group/category name. If the image
-  itself visually groups components (a labeled outer box/section/swimlane
-  containing several inner boxes, a color-coded region, etc.), use that
-  section's label as the domain, character-for-character, for every
-  component inside it. If the image has no visible grouping, infer a
-  small number of sensible domains (roughly 3-8) from what the
-  components do, and use the SAME domain string for every component that
-  belongs together — this is what lets the redrawn diagram visually
-  cluster related components instead of scattering them.
-- Every interface/relationship between components (arrows), each with a
-  unique ID, name, purpose, source component, and target component.
-- Every external dependency depicted (third-party services, databases, or
-  external systems drawn distinctly from the system's own components),
-  each with a unique ID, name, purpose, and which components use it.
-- Open questions or assumptions needed to fill gaps the image leaves
-  ambiguous — an unlabeled arrow, an illegible or ambiguous box.
-
-Return the redrawn architecture as the requested structured format: a
-clean, well-architected version of what the image depicts, not a literal
-transcription of any illegible or inconsistent labeling in the source
-image.
-"""

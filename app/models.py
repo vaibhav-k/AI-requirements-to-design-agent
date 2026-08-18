@@ -1,75 +1,32 @@
+"""Backward-compatible re-export shim — DEPRECATED, do not add to this file.
+
+Every model that used to live here moved to ``app.domain.requirements``
+as the first slice of the Clean Architecture migration (see README →
+"Clean Architecture Migration"). New code should import from
+``app.domain.requirements`` directly. This module exists only so the
+many call sites that still do ``from app.models import ...``
+(``app/storage.py``, ``app/api/routes/requirements.py``,
+``app/mcp/server.py``, ``app/session.py``, most of ``tests/``) keep
+working while they're migrated one at a time in later slices — it will
+be deleted once no importer of ``app.models`` remains.
+"""
+
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from app.domain.requirements import (
+    Actor,
+    Assumption,
+    OpenQuestion,
+    Requirement,
+    RequirementsArtifact,
+    StoredArtifact,
+)
 
-
-class Requirement(BaseModel):
-    """A functional or non-functional requirement."""
-
-    id: str
-    description: str
-    priority: str = Field(description="Priority: high, medium, or low")
-    rationale: str | None = None
-
-
-class Actor(BaseModel):
-    """A user, system, or other actor involved in the requirements."""
-
-    name: str
-    description: str
-
-
-class Assumption(BaseModel):
-    """An assumption made while interpreting the requirements."""
-
-    id: str
-    assumption: str
-    reason: str
-    confidence: str = Field(description="Confidence: high, medium, or low")
-
-
-class OpenQuestion(BaseModel):
-    """An unresolved question about the requirements."""
-
-    id: str
-    question: str
-    reason: str
-    blocking: bool = False
-
-
-class RequirementsArtifact(BaseModel):
-    """Structured representation of the user's requirements."""
-
-    summary: str
-    business_goal: str
-
-    actors: list[Actor]
-    functional_requirements: list[Requirement]
-    non_functional_requirements: list[Requirement]
-
-    data_requirements: list[str]
-    integration_requirements: list[str]
-    constraints: list[str]
-
-    assumptions: list[Assumption]
-    open_questions: list[OpenQuestion]
-
-
-class StoredArtifact(BaseModel):
-    """Versioned artifact persisted in Azure Blob Storage."""
-
-    artifact_id: str
-    session_id: str
-    artifact_type: str
-    version: int
-    created_at: str
-    source_text: str
-    requirements: RequirementsArtifact
-    source_filename: str | None = None
-    """Original uploaded filename, if this artifact came from a file upload.
-
-    ``None`` for typed-text input (see ``app/ingestion.py``). When set, the
-    original file bytes are persisted separately via
-    ``ArtifactStore.save_source_file`` — this field is just the pointer
-    back to "was there a file, and what was it called."
-    """
+__all__ = [
+    "Actor",
+    "Assumption",
+    "OpenQuestion",
+    "Requirement",
+    "RequirementsArtifact",
+    "StoredArtifact",
+]

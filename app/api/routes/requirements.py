@@ -287,13 +287,15 @@ async def _resolve_image_upload(
     filename, content = await _read_upload_content(file)
 
     try:
-        classification = classifier.classify(content, filename)
+        classification = await classifier.classify_async(content, filename)
     except ImageClassificationError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
 
     if classification.kind == "diagram":
         try:
-            design = diagram_interpreter.interpret(content, filename, notes=notes)
+            design = await diagram_interpreter.interpret_async(
+                content, filename, notes=notes
+            )
         except DiagramInterpretationError as exc:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)
@@ -540,7 +542,7 @@ async def start_run_from_upload(
     )
 
     record.requirements_version = 1
-    record.requirements = deps.analyzer.analyze(user_input=source_text)
+    record.requirements = await deps.analyzer.analyze_async(user_input=source_text)
     record.source_file_blob = deps.artifact_store.save_source_file(
         record.session_id, record.requirements_version, filename, content
     )
@@ -732,7 +734,7 @@ async def refine_run_from_upload(
     record.requirements_version += 1
     record.source_text = source_text
     record.source_filename = filename
-    record.requirements = deps.analyzer.analyze(
+    record.requirements = await deps.analyzer.analyze_async(
         user_input=source_text,
         previous_artifact=record.requirements,
     )

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -55,16 +55,45 @@ def make_design(**overrides: object) -> SystemDesignArtifact:
 
 @pytest.fixture
 def fakes() -> dict[str, MagicMock]:
+    requirements_analyzer = MagicMock()
+    # `start_run`/`refine_run` call the sync `.analyze(...)`; the upload
+    # routes (`start_run_from_upload`/`refine_run_from_upload`) call the
+    # async `.analyze_async(...)` instead (see app/analyzer.py — the sync
+    # facade can't be called from a running event loop). Delegating to
+    # `.analyze` here means every existing test that configures
+    # `.analyze.return_value`/`.side_effect` keeps working unchanged for
+    # both code paths, rather than needing every upload test updated too.
+    requirements_analyzer.analyze_async = AsyncMock(
+        side_effect=requirements_analyzer.analyze
+    )
+
+    # `image_classifier`/`diagram_interpreter` follow the exact same
+    # shape: `_resolve_image_upload` (itself `async def`, already running
+    # on the event loop) calls the async `.classify_async(...)`/
+    # `.interpret_async(...)` instead of the sync `.classify(...)`/
+    # `.interpret(...)` (see app/vision.py — the sync facade can't be
+    # called from a running event loop). Delegating each async mock to
+    # its sync counterpart means every test that configures
+    # `.classify.return_value`/`.interpret.side_effect` keeps working
+    # unchanged.
+    image_classifier = MagicMock()
+    image_classifier.classify_async = AsyncMock(side_effect=image_classifier.classify)
+
+    diagram_interpreter = MagicMock()
+    diagram_interpreter.interpret_async = AsyncMock(
+        side_effect=diagram_interpreter.interpret
+    )
+
     return {
         "store": MagicMock(),
         "artifact_store": MagicMock(),
-        "requirements_analyzer": MagicMock(),
+        "requirements_analyzer": requirements_analyzer,
         "design_analyzer": MagicMock(),
         "diagram_generator": MagicMock(),
         "validator": MagicMock(),
         "document_extractor": MagicMock(),
-        "image_classifier": MagicMock(),
-        "diagram_interpreter": MagicMock(),
+        "image_classifier": image_classifier,
+        "diagram_interpreter": diagram_interpreter,
     }
 
 

@@ -1,11 +1,42 @@
+"""Backward-compatible synchronous facade over the requirements use case.
+
+``RequirementsAnalyzer`` used to make a raw ``openai.OpenAI().responses
+.parse(...)`` call directly. As of the Clean Architecture migration (see
+README → "Clean Architecture Migration"), the real work happens in:
+
+* ``app.domain.requirements`` — the ``RequirementsArtifact`` entity
+* ``app.application.ports.RequirementsAgentPort`` — the abstraction
+* ``app.application.use_cases.analyze_requirements
+  .AnalyzeRequirementsUseCase`` — the orchestration
+* ``app.infrastructure.agents.requirements_agent
+  .AgentFrameworkRequirementsAgent`` — the concrete adapter, now backed
+  by Microsoft Agent Framework instead of a direct OpenAI SDK call
+
+This class exists only so the many existing synchronous call sites
+(``app/main.py``, ``app/session.py``, ``app/api/dependencies.py``,
+``app/api/routes/requirements.py``, ``app/mcp/server.py``) don't all
+need to change in the same slice — it's a "strangler fig" seam: those
+call sites will move to constructing/injecting the use case directly in
+a later slice, at which point this module can be deleted. New code
+should depend on ``AnalyzeRequirementsUseCase`` + ``RequirementsAgentPort``
+directly rather than adding new usages of this facade.
+"""
+
 from __future__ import annotations
 
+import asyncio
 import os
 
 from dotenv import load_dotenv
-from openai import OpenAI
 
-from .models import RequirementsArtifact
+from app.application.ports import RequirementsAgentPort
+from app.application.use_cases.analyze_requirements import (
+    AnalyzeRequirementsUseCase,
+)
+from app.domain.requirements import RequirementsArtifact
+from app.infrastructure.agents.requirements_agent import (
+    AgentFrameworkRequirementsAgent,
+)
 
 load_dotenv()
 
@@ -39,129 +70,67 @@ AZURE_OPENAI_MODEL = require_environment_variable(
 
 
 class RequirementsAnalyzer:
-    """Analyze user input into structured requirements."""
+    """Analyze user input into structured requirements (sync facade)."""
 
     def __init__(
         self,
         model: str = AZURE_OPENAI_MODEL,
+        agent: RequirementsAgentPort | None = None,
     ) -> None:
-        self.client = OpenAI(
-            api_key=AZURE_OPENAI_API_KEY,
-            base_url=AZURE_OPENAI_ENDPOINT.rstrip("/") + "/",
+        """``agent`` is injectable — pass a fake/mock ``RequirementsAgentPort``
+        in tests instead of constructing a real Microsoft Agent Framework
+        agent (and therefore requiring live Azure OpenAI credentials)."""
+
+        resolved_agent: RequirementsAgentPort = agent or (
+            AgentFrameworkRequirementsAgent(
+                api_key=AZURE_OPENAI_API_KEY,
+                endpoint=AZURE_OPENAI_ENDPOINT,
+                model=model,
+            )
         )
-        self.model = model
+
+        self._use_case = AnalyzeRequirementsUseCase(agent=resolved_agent)
+
+    async def analyze_async(
+        self,
+        user_input: str,
+        previous_artifact: RequirementsArtifact | None = None,
+    ) -> RequirementsArtifact:
+        """Analyze requirements and return a structured artifact.
+
+        The native, non-bridged entry point — use this from any ``async
+        def`` caller (e.g. ``start_run_from_upload``/``refine_run_from_upload``
+        in ``app/api/routes/requirements.py``) instead of ``analyze()``,
+        which cannot be called from inside a running event loop.
+        """
+
+        return await self._use_case.execute(user_input, previous_artifact)
 
     def analyze(
         self,
         user_input: str,
         previous_artifact: RequirementsArtifact | None = None,
     ) -> RequirementsArtifact:
-        """Analyze requirements and return a structured artifact."""
+        """Synchronous wrapper around ``analyze_async``, for callers that
+        aren't themselves ``async`` — the CLI (``app/main.py``,
+        ``app/session.py``), the sync FastAPI routes (``start_run``/
+        ``refine_run``, which FastAPI runs in a worker thread with no
+        event loop of its own), and the MCP tool functions
+        (``app/mcp/server.py``).
 
-        prompt = self._build_prompt(
-            user_input,
-            previous_artifact,
-        )
+        Raises ``RuntimeError`` if called from inside a *running* event
+        loop (i.e. from an ``async def`` function) — ``asyncio.run``
+        cannot nest inside one; call ``analyze_async`` directly instead.
+        """
 
-        response = self.client.responses.parse(
-            model=self.model,
-            input=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a precise software requirements "
-                        "analyst. Return only the requested "
-                        "structured requirements."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": prompt,
-                },
-            ],
-            text_format=RequirementsArtifact,
-        )
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError(
+                "RequirementsAnalyzer.analyze() cannot be called from a "
+                "running event loop — await analyze_async() instead."
+            )
 
-        if response.output_parsed is None:
-            raise RuntimeError("Azure OpenAI returned no parsed requirements.")
-
-        return response.output_parsed
-
-    @staticmethod
-    def _build_prompt(
-        user_input: str,
-        previous_artifact: RequirementsArtifact | None,
-    ) -> str:
-        """Build the requirements analysis prompt."""
-
-        previous_context = ""
-
-        if previous_artifact is not None:
-            previous_context = f"""
-The user is refining a previous requirements analysis.
-
-Previous analysis:
-
-{previous_artifact.model_dump_json(indent=2)}
-
-Use the previous analysis as the starting point.
-
-Preserve information that is still valid.
-
-Apply the user's new information.
-
-Do not silently remove requirements unless the user
-explicitly contradicts or removes them.
-"""
-
-        return f"""
-You are an AI requirements analyst.
-
-Analyze the user's software/system requirements and produce
-a structured understanding of what they are trying to build.
-
-The goal at this stage is NOT to design the architecture.
-
-Do NOT propose:
-
-- databases
-- microservices
-- APIs
-- cloud architecture
-- programming languages
-- frameworks
-- deployment architecture
-
-Focus on understanding the requirements.
-
-Identify:
-
-1. Overall business goal.
-2. Actors/users involved.
-3. Functional requirements.
-4. Non-functional requirements.
-5. Data requirements.
-6. Integration requirements.
-7. Explicit constraints.
-8. Assumptions.
-9. Open questions.
-
-IMPORTANT:
-
-- Do not invent requirements.
-- Distinguish explicit requirements from assumptions.
-- Put ambiguous information into open_questions.
-- Every significant assumption needs a reason.
-- Every open question needs a reason.
-- Keep requirements concise and testable where possible.
-- Assign IDs such as FR-001, FR-002, NFR-001.
-- Assign priorities using high, medium, or low.
-- Use high confidence only for explicit information.
-- Do not make architecture decisions.
-
-{previous_context}
-
-USER INPUT:
-
-{user_input}
-"""
+        return asyncio.run(self._use_case.execute(user_input, previous_artifact))

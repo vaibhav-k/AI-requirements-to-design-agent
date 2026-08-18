@@ -1,18 +1,49 @@
+"""Backward-compatible synchronous facade over the design use case.
+
+``SystemDesignAnalyzer`` used to make a raw ``openai.OpenAI().responses
+.parse(...)`` call directly. As of this slice of the Clean Architecture
+migration (see README → "Clean Architecture Migration"), the real work
+happens in:
+
+* ``app.design.models`` — the ``SystemDesignArtifact`` entity (not yet
+  moved into ``app.domain`` — see the README section above)
+* ``app.application.ports.SystemDesignAgentPort`` — the abstraction
+* ``app.application.use_cases.generate_system_design
+  .GenerateSystemDesignUseCase`` — the orchestration
+* ``app.infrastructure.agents.system_design_agent
+  .AgentFrameworkSystemDesignAgent`` — the concrete adapter, now backed
+  by Microsoft Agent Framework instead of a direct OpenAI SDK call
+
+This class exists only so the many existing synchronous call sites
+(``app/main.py``, ``app/design/session.py``, ``app/api/dependencies.py``,
+``app/mcp/server.py``) don't all need to change in the same slice — the
+same "strangler fig" seam ``app/analyzer.py`` uses for requirements
+analysis. New code should depend on ``GenerateSystemDesignUseCase`` +
+``SystemDesignAgentPort`` directly rather than adding new usages of this
+facade.
+"""
+
 from __future__ import annotations
 
+import asyncio
 import os
 
 from dotenv import load_dotenv
-from openai import OpenAI
 
+from app.application.errors import DesignGenerationError
+from app.application.ports import SystemDesignAgentPort
+from app.application.use_cases.generate_system_design import (
+    GenerateSystemDesignUseCase,
+)
 from app.design.models import SystemDesignArtifact
-from app.models import RequirementsArtifact
+from app.domain.requirements import RequirementsArtifact
+from app.infrastructure.agents.system_design_agent import (
+    AgentFrameworkSystemDesignAgent,
+)
 
 load_dotenv()
 
-
-class DesignGenerationError(RuntimeError):
-    """Raised when architecture generation fails."""
+__all__ = ["DesignGenerationError", "SystemDesignAnalyzer"]
 
 
 def _required_environment_variable(name: str) -> str:
@@ -32,17 +63,45 @@ AZURE_OPENAI_MODEL = _required_environment_variable("AZURE_OPENAI_MODEL")
 
 
 class SystemDesignAnalyzer:
-    """Generate a high-level architecture from requirements."""
+    """Generate a high-level architecture from requirements (sync facade)."""
 
     def __init__(
         self,
         model: str = AZURE_OPENAI_MODEL,
+        agent: SystemDesignAgentPort | None = None,
     ) -> None:
-        self.client = OpenAI(
-            api_key=AZURE_OPENAI_API_KEY,
-            base_url=AZURE_OPENAI_ENDPOINT.rstrip("/") + "/",
+        """``agent`` is injectable — pass a fake/mock ``SystemDesignAgentPort``
+        in tests instead of constructing a real Microsoft Agent Framework
+        agent (and therefore requiring live Azure OpenAI credentials)."""
+
+        resolved_agent: SystemDesignAgentPort = agent or (
+            AgentFrameworkSystemDesignAgent(
+                api_key=AZURE_OPENAI_API_KEY,
+                endpoint=AZURE_OPENAI_ENDPOINT,
+                model=model,
+            )
         )
-        self.model = model
+
+        self._use_case = GenerateSystemDesignUseCase(agent=resolved_agent)
+
+    async def analyze_async(
+        self,
+        requirements: RequirementsArtifact,
+        previous_design: SystemDesignArtifact | None = None,
+        refinement_input: str | None = None,
+    ) -> SystemDesignArtifact:
+        """The native, non-bridged entry point — use this from any ``async
+        def`` caller instead of ``analyze()``, which cannot be called
+        from inside a running event loop. No current call site needs
+        this yet (every ``ArchitectureSession.generate`` caller is sync),
+        but it's kept symmetric with ``RequirementsAnalyzer.analyze_async``
+        for when one does."""
+
+        return await self._use_case.execute(
+            requirements,
+            previous_design=previous_design,
+            refinement_input=refinement_input,
+        )
 
     def analyze(
         self,
@@ -57,143 +116,27 @@ class SystemDesignAnalyzer:
         design instead of generating a fresh one from scratch — the
         architecture analogue of ``RequirementsAnalyzer.analyze``'s own
         ``previous_artifact`` parameter.
+
+        Synchronous on purpose — see ``RequirementsAnalyzer.analyze``'s
+        docstring for why, and why this raises ``RuntimeError`` instead
+        of deadlocking/crashing confusingly if called from a running
+        event loop.
         """
 
-        prompt = self._build_prompt(requirements, previous_design, refinement_input)
-
         try:
-            response = self.client.responses.parse(
-                model=self.model,
-                input=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a senior software architect. "
-                            "Generate a high-level system architecture "
-                            "from the supplied requirements."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    },
-                ],
-                text_format=SystemDesignArtifact,
-            )
-        except Exception as exc:
-            raise DesignGenerationError(
-                "Azure OpenAI architecture generation failed."
-            ) from exc
-
-        if response.output_parsed is None:
-            raise DesignGenerationError(
-                "Azure OpenAI returned no parsed system design."
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError(
+                "SystemDesignAnalyzer.analyze() cannot be called from a "
+                "running event loop — await analyze_async() instead."
             )
 
-        return response.output_parsed
-
-    @staticmethod
-    def _build_prompt(
-        requirements: RequirementsArtifact,
-        previous_design: SystemDesignArtifact | None = None,
-        refinement_input: str | None = None,
-    ) -> str:
-        requirements_json = requirements.model_dump_json(indent=2)
-
-        refinement_context = ""
-
-        if previous_design is not None:
-            refinement_context = f"""
-The user is refining a previously generated architecture rather than
-starting over.
-
-Previous architecture:
-
-{previous_design.model_dump_json(indent=2)}
-
-Requested change:
-
-{refinement_input or ""}
-
-Use the previous architecture as the starting point. Preserve components,
-interfaces, and external dependencies that are still valid. Apply the
-requested change. Do not silently remove or rename existing components,
-interfaces, or dependencies unless the requested change explicitly calls
-for it — prefer adding or adjusting over wholesale regeneration, so
-existing IDs remain stable across a refinement wherever possible. Also
-preserve each existing component's "domain" string exactly as-is unless
-the requested change specifically moves it to a different group; give
-any newly added component a domain consistent with the existing set
-(reuse an existing domain string where it fits, rather than inventing a
-near-duplicate).
-"""
-
-        return f"""
-Create a HIGH-LEVEL SYSTEM ARCHITECTURE from the requirements below.
-
-This is MVP-2 of a requirements-to-design agent.
-
-The purpose is to transform understood requirements into a
-logical system architecture.
-{refinement_context}
-
-DO:
-
-- Identify major logical system components.
-- Give every component a unique ID.
-- Describe each component's responsibility.
-- Assign every component a short "domain" — a group/category name (e.g.
-  "Client & Identity", "Data Platform", "Integration", "Finance
-  Services") shared by every component that belongs together logically.
-  Use the SAME domain string, character-for-character, for every
-  component in that group, and keep the number of distinct domains
-  small (roughly 3-8 for a typical design) — this is what lets the
-  rendered diagram visually cluster related components together instead
-  of scattering them.
-- Map each component to the requirement IDs that justify it.
-- Identify important interactions BETWEEN COMPONENTS ONLY.
-- Give every interface a unique ID.
-- Map each interface to the requirement IDs that justify it.
-- Identify external services, hardware, or dependencies explicitly
-  required by the requirements.
-- For each external dependency, identify the components that use it,
-  by listing their component IDs in that dependency's own
-  "used_by_components" field.
-- Keep the architecture technology-neutral where possible.
-- Clearly distinguish requirements from assumptions.
-- Identify unresolved architecture questions.
-
-DO NOT:
-
-- Write application code.
-- Design database schemas.
-- Specify table structures.
-- Specify class diagrams.
-- Specify detailed APIs.
-- Specify deployment topology.
-- Specify Kubernetes.
-- Specify cloud networking.
-- Choose frameworks without a requirement-driven reason.
-- Invent detailed infrastructure.
-- Over-engineer the solution.
-- Create an interface whose source or target is an external dependency.
-  A component's use of an external dependency (e.g. "Payment Service calls
-  the Stripe API") is captured ONLY by listing the component's ID under
-  that dependency's "used_by_components" — never as an interface. Every
-  interface's source_component and target_component must each be the ID
-  of an item in "components"; an external dependency's ID is never valid
-  there, in either direction.
-
-Every requirement-to-component and requirement-to-interface mapping
-must reference an actual requirement ID from the supplied requirements.
-
-The architecture should be understandable to a product owner,
-software architect, and engineering team.
-
-The resulting architecture will also be rendered as a
-high-level Graphviz diagram.
-
-Accepted requirements:
-
-{requirements_json}
-"""
+        return asyncio.run(
+            self._use_case.execute(
+                requirements,
+                previous_design=previous_design,
+                refinement_input=refinement_input,
+            )
+        )

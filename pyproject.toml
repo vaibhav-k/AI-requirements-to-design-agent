@@ -59,3 +59,22 @@ disallow_untyped_calls = false
 module = ["msal"]
 ignore_missing_imports = true
 disallow_untyped_calls = false
+
+[[tool.mypy.overrides]]
+# This project has no direct or transitive dependency on numpy — but
+# `openai/_extras/numpy_proxy.py` (imported by `openai.resources
+# .embeddings`, which `openai/__init__.py` always loads) does
+# `if TYPE_CHECKING: import numpy`, so mypy will still try to resolve and
+# fully parse numpy's stubs *if numpy happens to be installed at all* in
+# whatever environment mypy runs in — e.g. a dev virtualenv that also has
+# numpy for unrelated reasons (data-science tooling, a different project
+# sharing the same venv, etc.). Some numpy stub versions use newer syntax
+# (PEP 695 `type` aliases) than this project's `python_version = "3.11"`
+# target supports, which fails as a hard parse error — "Type statement is
+# only supported in Python 3.12 and greater" — and aborts the whole mypy
+# run before it checks anything else. `follow_imports = "skip"` stops
+# mypy from ever opening numpy's source/stubs (treating the import as
+# `Any` instead), which sidesteps this regardless of which numpy version
+# happens to be sitting in the environment.
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
