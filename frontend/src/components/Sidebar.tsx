@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 
-import { ApiError, useRequirementsApi } from "../api"
+import { describeError, useRequirementsApi } from "../api"
 import type { RequirementsRunView } from "../types"
 import { ErrorBanner } from "./ErrorBanner"
 
@@ -34,7 +34,12 @@ export function Sidebar({ activeSessionId, onSelect, onStartNew, refreshKey }: S
       .catch((err: unknown) => {
         if (cancelled) return
         setRuns([])
-        setError(err instanceof ApiError ? err.message : "Could not load sessions.")
+        // Always show the real reason: ApiError/NetworkError/TokenAcquisitionError
+        // all carry a specific, already-human-readable message (see api.ts) —
+        // an empty run list is reported separately below as "No sessions yet.",
+        // never folded into this branch, so this text is only ever shown for
+        // an actual failure to load, not for "you have no prior sessions."
+        setError(`Could not load sessions: ${describeError(err)}`)
       })
     return () => {
       cancelled = true

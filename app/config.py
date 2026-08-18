@@ -24,7 +24,13 @@ class Settings(BaseSettings):
     )
 
     # ---- HTTP host ----
-    host: str = "0.0.0.0"
+    # Binding all interfaces is intentional, not an oversight: this server
+    # runs inside a container (see the project's Dockerfile/docs) and must
+    # accept connections routed in from outside it — binding to 127.0.0.1
+    # would make it unreachable from the host or from other containers.
+    # Actual exposure is controlled by the container/orchestrator's port
+    # mapping and network policy, not by this default.
+    host: str = "0.0.0.0"  # nosec B104 -- intentional for containerized deployment
     port: int = 8000
     cors_allow_origins: str = "http://localhost:5173,http://localhost:4173"
 

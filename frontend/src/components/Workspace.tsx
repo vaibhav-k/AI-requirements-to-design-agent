@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react"
 
 import { ApiError, useRequirementsApi } from "../api"
+import { hasAnyRole, ROLE_ARCHITECT, ROLE_REVIEWER, ROLE_USER } from "../permissions"
 import type { RequirementsArtifact, RequirementsRunView, SystemDesignArtifact } from "../types"
+import { useCurrentUser } from "../useCurrentUser"
 import { ArtifactPanel, type ArtifactTab } from "./ArtifactPanel"
 import { Conversation, type ConversationStatus, type TranscriptEntry } from "./Conversation"
 
@@ -32,6 +34,26 @@ function isValidationFailure(message: string): boolean {
 
 function nextEntryId(): string {
   return crypto.randomUUID()
+}
+
+/** Turns a caught error into transcript text — an `ApiError` with status
+ * 401 ("not authenticated at all") or 403 ("authenticated, but missing the
+ * role this needs") gets a message that says so in plain language rather
+ * than surfacing the raw backend detail as the *only* signal; 403's
+ * backend detail is already specific about which role is missing (see
+ * `require_role` in app/security/auth.py), so it's appended rather than
+ * replaced. Any other status, or a non-ApiError, falls back to `fallback`. */
+function friendlyErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) {
+    if (err.status === 401) {
+      return `You're not signed in. Sign in above and try again. (${err.message})`
+    }
+    if (err.status === 403) {
+      return `You don't have permission to do this: ${err.message}`
+    }
+    return err.message
+  }
+  return fallback
 }
 
 export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
@@ -85,7 +107,7 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
         setStatus("error")
         appendEntry({
           role: "assistant",
-          content: err instanceof ApiError ? err.message : "Could not load this session.",
+          content: friendlyErrorMessage(err, "Could not load this session."),
           tone: "error",
         })
       })
@@ -116,7 +138,7 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
           setStatus("error")
           appendEntry({
             role: "assistant",
-            content: err instanceof ApiError ? err.message : "Could not start the session.",
+            content: friendlyErrorMessage(err, "Could not start the session."),
             tone: "error",
           })
         })
@@ -143,7 +165,7 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
         .catch((err: unknown) => {
           setStatus("error")
           const message =
-            err instanceof ApiError ? err.message : "Could not refine the architecture."
+            friendlyErrorMessage(err, "Could not refine the architecture.")
           appendEntry({
             role: "assistant",
             content: isValidationFailure(message)
@@ -187,7 +209,76 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
         setStatus("error")
         appendEntry({
           role: "assistant",
-          content: err instanceof ApiError ? err.message : "Could not refine requirements.",
+          content: friendlyErrorMessage(err, "Could not refine requirements."),
+          tone: "error",
+        })
+      })
+      .finally(() => setBusy(false))
+  }
+
+  const handleSendFile = (file: File, notes?: string) => {
+    appendEntry({
+      role: "user",
+      content: notes ? `Scanned file: ${file.name}\n\n${notes}` : `Scanned file: ${file.name}`,
+    })
+
+    if (!sessionId) {
+      setBusy(true)
+      setStatus("processing")
+      api
+        .startRunFromUpload(file, notes)
+        .then((result) => {
+          setRun(result)
+          setStatus("ready")
+          if (result.requirements) {
+            appendEntry({ role: "assistant", content: summarizeRequirements(result.requirements) })
+          }
+          onSessionCreated(result.session_id)
+        })
+        .catch((err: unknown) => {
+          setStatus("error")
+          appendEntry({
+            role: "assistant",
+            content: friendlyErrorMessage(err, "Could not scan the file."),
+            tone: "error",
+          })
+        })
+        .finally(() => setBusy(false))
+      return
+    }
+
+    if (run && run.stage !== "requirements") {
+      // Same guard as handleSend: file upload only makes sense while the
+      // session is still refining requirements, matching the backend's
+      // /refine/upload route (409 outside STAGE_REQUIREMENTS).
+      appendEntry({
+        role: "assistant",
+        content:
+          "This session has already moved past the requirements stage; scanning a new file isn't possible here.",
+      })
+      return
+    }
+
+    setBusy(true)
+    setStatus("processing")
+    api
+      .refineRunFromUpload(sessionId, file, notes)
+      .then((result) => {
+        setRun(result)
+        setStatus(result.error ? "error" : "ready")
+        setRefreshKey((key) => key + 1)
+        if (result.requirements) {
+          appendEntry({ role: "assistant", content: summarizeRequirements(result.requirements) })
+        }
+        if (result.error) {
+          appendEntry({ role: "assistant", content: result.error, tone: "error" })
+        }
+      })
+      .catch((err: unknown) => {
+        setStatus("error")
+        appendEntry({
+          role: "assistant",
+          content: friendlyErrorMessage(err, "Could not scan the file."),
           tone: "error",
         })
       })
@@ -218,12 +309,64 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
       .catch((err: unknown) => {
         setStatus("error")
         const message =
-          err instanceof ApiError ? err.message : "Could not generate the architecture."
+          friendlyErrorMessage(err, "Could not generate the architecture.")
         appendEntry({
           role: "assistant",
           content: isValidationFailure(message)
             ? message
             : `Architecture generation failed: ${message}`,
+          tone: "error",
+        })
+      })
+      .finally(() => setBusy(false))
+  }
+
+  const handleApprove = () => {
+    if (!sessionId) return
+    setBusy(true)
+    setStatus("processing")
+    appendEntry({ role: "user", content: "Approve architecture" })
+    api
+      .approveRun(sessionId)
+      .then((result) => {
+        setRun(result)
+        setStatus("ready")
+        appendEntry({
+          role: "assistant",
+          content: `Architecture v${result.design_version} approved.`,
+        })
+      })
+      .catch((err: unknown) => {
+        setStatus("error")
+        appendEntry({
+          role: "assistant",
+          content: friendlyErrorMessage(err, "Could not record the approval."),
+          tone: "error",
+        })
+      })
+      .finally(() => setBusy(false))
+  }
+
+  const handleReject = () => {
+    if (!sessionId) return
+    setBusy(true)
+    setStatus("processing")
+    appendEntry({ role: "user", content: "Reject architecture" })
+    api
+      .rejectRun(sessionId)
+      .then((result) => {
+        setRun(result)
+        setStatus("ready")
+        appendEntry({
+          role: "assistant",
+          content: `Architecture v${result.design_version} rejected. Describe what should change and it'll be refined.`,
+        })
+      })
+      .catch((err: unknown) => {
+        setStatus("error")
+        appendEntry({
+          role: "assistant",
+          content: friendlyErrorMessage(err, "Could not record the rejection."),
           tone: "error",
         })
       })
@@ -240,8 +383,25 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
 
   const canSend = !busy && status !== "loading"
   const canAccept = Boolean(run && run.stage === "requirements" && run.requirements)
+  const canUploadFile = !run || run.stage === "requirements"
+  const canApprove = Boolean(run && run.stage === "architecture")
   const hasRequirements = Boolean(run?.requirements)
   const hasArchitecture = Boolean(run?.design)
+
+  // Role gates — see permissions.ts and useCurrentUser.ts. Every check
+  // defaults to "allowed" while `!loaded` (roles haven't been fetched
+  // yet) so buttons don't flash disabled on first render; the backend
+  // still enforces the real permission regardless of what's shown here.
+  const { roles, loaded: rolesLoaded } = useCurrentUser()
+  const canCreateRequirements = !rolesLoaded || hasAnyRole(roles, [ROLE_USER])
+  const canManageArchitecture = !rolesLoaded || hasAnyRole(roles, [ROLE_ARCHITECT])
+  const canDecideArchitecture = !rolesLoaded || hasAnyRole(roles, [ROLE_REVIEWER])
+  // "Send" does double duty (refine requirements, or refine an already-
+  // accepted architecture once `stage === "architecture"` — see
+  // `handleSend`'s own branching above) — which role it needs depends on
+  // which of those it would currently do.
+  const sendAllowed =
+    run && run.stage === "architecture" ? canManageArchitecture : canCreateRequirements
 
   return (
     <div className="workspace">
@@ -251,9 +411,29 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
           status={status}
           statusLabel={statusLabel[status]}
           onSend={handleSend}
+          sendAllowed={sendAllowed}
+          sendDisabledReason={
+            run && run.stage === "architecture"
+              ? "Requires the Architect role."
+              : "Requires the User role."
+          }
+          onSendFile={handleSendFile}
+          canUploadFile={canUploadFile}
+          hasRequirements={hasRequirements}
+          uploadAllowed={canCreateRequirements}
+          uploadDisabledReason="Requires the User role."
+          sourceFilename={run?.source_filename}
           onAccept={handleAccept}
           canAccept={canAccept}
           acceptLabel={busy ? "Generating architecture…" : "Accept & generate architecture"}
+          acceptAllowed={canManageArchitecture}
+          acceptDisabledReason="Requires the Architect role."
+          onApprove={handleApprove}
+          onReject={handleReject}
+          canApprove={canApprove}
+          decisionAllowed={canDecideArchitecture}
+          decisionDisabledReason="Requires the Reviewer role."
+          approvalStatus={run?.approval_status ?? "pending"}
           canSend={canSend}
           placeholder={
             sessionId

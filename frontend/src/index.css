@@ -9,6 +9,8 @@
   --accent-border: rgba(170, 59, 255, 0.5);
   --error: #c0392b;
   --error-bg: rgba(192, 57, 43, 0.1);
+  --success: #1e8e5a;
+  --success-bg: rgba(30, 142, 90, 0.1);
 
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, Consolas, monospace;
@@ -35,6 +37,8 @@
     --accent-border: rgba(192, 132, 252, 0.5);
     --error: #ff8a75;
     --error-bg: rgba(255, 138, 117, 0.12);
+    --success: #4ade80;
+    --success-bg: rgba(74, 222, 128, 0.12);
   }
 }
 

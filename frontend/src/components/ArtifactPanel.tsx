@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 
-import { ApiError, useRequirementsApi } from "../api"
+import { describeError, useRequirementsApi } from "../api"
 import { useVersionedArtifact } from "../hooks/useVersionedArtifact"
 import type { RequirementsArtifact, SystemDesignArtifact } from "../types"
 import { ArchitectureView } from "./ArchitectureView"
@@ -70,7 +70,7 @@ export function ArtifactPanel({
       })
       .catch((err: unknown) => {
         if (cancelled) return
-        setDiagramError(err instanceof ApiError ? err.message : "Could not load the diagram.")
+        setDiagramError(`Could not load the diagram: ${describeError(err)}`)
       })
     return () => {
       cancelled = true

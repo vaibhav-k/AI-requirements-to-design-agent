@@ -3,7 +3,12 @@ import { InteractionRequiredAuthError, type IPublicClientApplication } from "@az
 import { useMsal } from "@azure/msal-react"
 
 import { apiBaseUrl, authIsConfigured, loginRequest } from "./authConfig"
-import type { RequirementsArtifact, RequirementsRunView, SystemDesignArtifact } from "./types"
+import type {
+  MeResponse,
+  RequirementsArtifact,
+  RequirementsRunView,
+  SystemDesignArtifact,
+} from "./types"
 
 /** Thrown for any non-2xx response, carrying the backend's `detail` message
  * (FastAPI's standard error body shape) when it has one. */
@@ -35,6 +40,18 @@ async function readErrorDetail(response: Response): Promise<string> {
   return `Request failed with status ${response.status}`
 }
 
+/** Thrown when acquiring a sign-in token itself fails — distinct from
+ * ApiError (a backend response) and from a network failure (the request
+ * never reached the backend at all), so the UI can say exactly which of
+ * the three happened instead of one ambiguous "could not load" message. */
+export class TokenAcquisitionError extends Error {
+  constructor(cause: unknown) {
+    const detail = cause instanceof Error ? cause.message : String(cause)
+    super(`Could not acquire a sign-in token: ${detail}`)
+    this.name = "TokenAcquisitionError"
+  }
+}
+
 async function acquireToken(
   instance: IPublicClientApplication,
   account: ReturnType<IPublicClientApplication["getAllAccounts"]>[number] | undefined,
@@ -52,11 +69,35 @@ async function acquireToken(
     return result.accessToken
   } catch (error) {
     if (error instanceof InteractionRequiredAuthError) {
-      const result = await instance.acquireTokenPopup(request)
-      return result.accessToken
+      try {
+        const result = await instance.acquireTokenPopup(request)
+        return result.accessToken
+      } catch (popupError) {
+        throw new TokenAcquisitionError(popupError)
+      }
     }
-    throw error
+    throw new TokenAcquisitionError(error)
   }
+}
+
+/** Thrown when `fetch` itself fails — the request never reached the
+ * backend (DNS/CORS/connection-refused/offline) — so this is never
+ * confused with an ApiError (a real HTTP response the backend sent). */
+export class NetworkError extends Error {
+  constructor(path: string, cause: unknown) {
+    const detail = cause instanceof Error ? cause.message : String(cause)
+    super(`Could not reach the server at ${path}: ${detail}`)
+    this.name = "NetworkError"
+  }
+}
+
+/** A human-readable description of any error a request can throw —
+ * ApiError, NetworkError, and TokenAcquisitionError all already carry a
+ * specific, self-explanatory `message` (see above); this only exists so
+ * callers never fall back to a made-up generic string that hides which of
+ * the three actually happened (or masks a genuinely unexpected error type). */
+export function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
 }
 
 /** Typed client for the `/requirements-runs` endpoints (app/api/routes/requirements.py).
@@ -72,13 +113,27 @@ export function useRequirementsApi() {
     async (path: string, init: RequestInit = {}): Promise<Response> => {
       const token = await acquireToken(instance, accounts[0])
       const headers = new Headers(init.headers)
-      if (init.body) {
+      // Multipart bodies (file uploads) must NOT get an explicit
+      // Content-Type here — the browser sets one itself, including the
+      // random boundary string the server needs to parse the body. Setting
+      // "application/json" (or anything else) on a FormData body breaks
+      // multipart parsing on the server.
+      if (init.body && !(init.body instanceof FormData)) {
         headers.set("Content-Type", "application/json")
       }
       if (token) {
         headers.set("Authorization", `Bearer ${token}`)
       }
-      return fetch(`${apiBaseUrl}${path}`, { ...init, headers })
+      try {
+        return await fetch(`${apiBaseUrl}${path}`, { ...init, headers })
+      } catch (error) {
+        // fetch() rejects (rather than resolving with a non-ok Response)
+        // only when the request never reached the server at all — refused
+        // connection, DNS failure, CORS block, offline. Wrapping it here
+        // means callers never have to guess whether a caught error came
+        // from the backend or from never reaching it.
+        throw new NetworkError(path, error)
+      }
     },
     [instance, accounts],
   )
@@ -118,6 +173,13 @@ export function useRequirementsApi() {
   // array instead of needing to suppress the exhaustive-deps warning.
   return useMemo(
     () => ({
+      /** The caller's identity + Entra ID App Roles (`app/web/main.py`'s
+       * `whoami`) — used by `useCurrentUser` to grey out actions the
+       * signed-in user's role doesn't permit. Works in every auth mode,
+       * including anonymous (`AUTH_ENABLED=false`), since `/me` never
+       * 401s in that mode. */
+      getMe: () => request<MeResponse>("/me"),
+
       listRuns: () => request<RequirementsRunView[]>("/requirements-runs"),
 
       startRun: (input: string) =>
@@ -125,6 +187,18 @@ export function useRequirementsApi() {
           method: "POST",
           body: JSON.stringify({ input }),
         }),
+
+      startRunFromUpload: (file: File, notes?: string) => {
+        const form = new FormData()
+        form.set("file", file)
+        if (notes) {
+          form.set("notes", notes)
+        }
+        return request<RequirementsRunView>("/requirements-runs/upload", {
+          method: "POST",
+          body: form,
+        })
+      },
 
       getRun: (sessionId: string) =>
         request<RequirementsRunView>(`/requirements-runs/${sessionId}`),
@@ -134,6 +208,21 @@ export function useRequirementsApi() {
           method: "POST",
           body: JSON.stringify({ input }),
         }),
+
+      refineRunFromUpload: (sessionId: string, file: File, notes?: string) => {
+        const form = new FormData()
+        form.set("file", file)
+        if (notes) {
+          form.set("notes", notes)
+        }
+        return request<RequirementsRunView>(
+          `/requirements-runs/${sessionId}/refine/upload`,
+          {
+            method: "POST",
+            body: form,
+          },
+        )
+      },
 
       acceptRun: (sessionId: string) =>
         request<RequirementsRunView>(`/requirements-runs/${sessionId}/accept`, {
@@ -148,6 +237,18 @@ export function useRequirementsApi() {
             body: JSON.stringify({ input }),
           },
         ),
+
+      approveRun: (sessionId: string, reason?: string) =>
+        request<RequirementsRunView>(`/requirements-runs/${sessionId}/approve`, {
+          method: "POST",
+          body: JSON.stringify({ reason: reason ?? null }),
+        }),
+
+      rejectRun: (sessionId: string, reason?: string) =>
+        request<RequirementsRunView>(`/requirements-runs/${sessionId}/reject`, {
+          method: "POST",
+          body: JSON.stringify({ reason: reason ?? null }),
+        }),
 
       // --- Artifact history (app/api/routes/artifacts.py) — read-only,
       // never generates anything; only exposes what's already persisted.

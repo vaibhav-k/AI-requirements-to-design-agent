@@ -31,7 +31,7 @@ from app.design.validator import (
     ArchitectureValidationError,
     ArchitectureValidator,
 )
-from app.models import RequirementsArtifact
+from app.models import RequirementsArtifact, StoredArtifact
 from app.session import DesignSession
 from app.storage import (
     AZURE_CONNECTION_STRING,
@@ -117,13 +117,7 @@ def display_requirements(artifact: RequirementsArtifact) -> None:
     print("=" * 80)
 
 
-def display_design(design: SystemDesignArtifact) -> None:
-    """Display a generated architecture."""
-
-    print("\nArchitecture Summary")
-    print("-" * 80)
-    print(design.architecture_summary)
-
+def _print_design_components(design: SystemDesignArtifact) -> None:
     print("\nARCHITECTURE COMPONENTS")
     print("-" * 80)
 
@@ -140,6 +134,8 @@ def display_design(design: SystemDesignArtifact) -> None:
     else:
         print("No architecture components identified.")
 
+
+def _print_design_interfaces(design: SystemDesignArtifact) -> None:
     print("\nARCHITECTURE INTERFACES")
     print("-" * 80)
 
@@ -163,6 +159,8 @@ def display_design(design: SystemDesignArtifact) -> None:
     else:
         print("No architecture interfaces identified.")
 
+
+def _print_design_external_dependencies(design: SystemDesignArtifact) -> None:
     print("\nEXTERNAL DEPENDENCIES")
     print("-" * 80)
 
@@ -179,6 +177,8 @@ def display_design(design: SystemDesignArtifact) -> None:
     else:
         print("No external dependencies identified.")
 
+
+def _print_design_assumptions(design: SystemDesignArtifact) -> None:
     print("\nARCHITECTURE ASSUMPTIONS")
     print("-" * 80)
 
@@ -189,6 +189,8 @@ def display_design(design: SystemDesignArtifact) -> None:
     else:
         print("No architecture assumptions identified.")
 
+
+def _print_design_open_questions(design: SystemDesignArtifact) -> None:
     print("\nARCHITECTURE OPEN QUESTIONS")
     print("-" * 80)
 
@@ -198,6 +200,89 @@ def display_design(design: SystemDesignArtifact) -> None:
             print(f"    Reason: {question.reason}")
     else:
         print("No architecture questions identified.")
+
+
+def display_design(design: SystemDesignArtifact) -> None:
+    """Display a generated architecture.
+
+    Delegates each section to its own ``_print_design_*`` helper —
+    previously all inlined here, which pushed this one function past a
+    reasonable cyclomatic-complexity threshold (15 branches). Each helper
+    is a single, independently readable "if there's data, list it,
+    otherwise say so" block.
+    """
+
+    print("\nArchitecture Summary")
+    print("-" * 80)
+    print(design.architecture_summary)
+
+    _print_design_components(design)
+    _print_design_interfaces(design)
+    _print_design_external_dependencies(design)
+    _print_design_assumptions(design)
+    _print_design_open_questions(design)
+
+
+def _accept_and_generate_architecture(
+    session: DesignSession,
+    store: ArtifactStore,
+    artifact: StoredArtifact,
+) -> bool:
+    """Handle the "1. Accept" menu choice.
+
+    Generates the architecture from the accepted requirements, displays and
+    reports it on success, or prints a labeled failure message on any of
+    the (mutually exclusive) generation-error types. Returns ``True`` when
+    the interactive loop should stop (a design was produced), ``False``
+    when it should loop back to the menu (a recoverable generation error
+    was already reported to the user).
+
+    Extracted out of ``run`` — inlined, this ``try``/``except`` cascade
+    plus the display/print calls pushed ``run`` well past a reasonable
+    statement-count threshold (59/50).
+    """
+    print("\nRequirements accepted.")
+    print("\nGenerating high-level system architecture...")
+
+    try:
+        design_session = ArchitectureSession(
+            analyzer=SystemDesignAnalyzer(),
+            diagram_generator=ArchitectureDiagramGenerator(),
+            validator=ArchitectureValidator(),
+            store=store,
+            session_id=session.session_id,
+        )
+
+        design_result = design_session.generate(artifact.requirements)
+
+    except ArchitectureValidationError as exc:
+        print("\nArchitecture validation failed:")
+        print(exc)
+        return False
+
+    except DesignGenerationError as exc:
+        print("\nArchitecture generation failed:")
+        print(exc)
+        return False
+
+    except DiagramGenerationError as exc:
+        print("\nArchitecture diagram generation failed:")
+        print(exc)
+        return False
+
+    except DesignGenerationWorkflowError as exc:
+        print("\nArchitecture workflow failed:")
+        print(exc)
+        return False
+
+    display_design(design_result.design)
+
+    print("\nSaved design:")
+    print(f"  Version: v{design_result.version}")
+    print(f"  JSON: {design_result.design_blob}")
+    print(f"  SVG:  {design_result.diagram_blob}")
+
+    return True
 
 
 def run() -> None:
@@ -241,48 +326,9 @@ def run() -> None:
         choice = input("\n> ").strip()
 
         if choice == "1":
-            print("\nRequirements accepted.")
-            print("\nGenerating high-level system architecture...")
-
-            try:
-                design_session = ArchitectureSession(
-                    analyzer=SystemDesignAnalyzer(),
-                    diagram_generator=ArchitectureDiagramGenerator(),
-                    validator=ArchitectureValidator(),
-                    store=store,
-                    session_id=session.session_id,
-                )
-
-                design_result = design_session.generate(artifact.requirements)
-
-            except ArchitectureValidationError as exc:
-                print("\nArchitecture validation failed:")
-                print(exc)
-                continue
-
-            except DesignGenerationError as exc:
-                print("\nArchitecture generation failed:")
-                print(exc)
-                continue
-
-            except DiagramGenerationError as exc:
-                print("\nArchitecture diagram generation failed:")
-                print(exc)
-                continue
-
-            except DesignGenerationWorkflowError as exc:
-                print("\nArchitecture workflow failed:")
-                print(exc)
-                continue
-
-            display_design(design_result.design)
-
-            print("\nSaved design:")
-            print(f"  Version: v{design_result.version}")
-            print(f"  JSON: {design_result.design_blob}")
-            print(f"  SVG:  {design_result.diagram_blob}")
-
-            break
+            if _accept_and_generate_architecture(session, store, artifact):
+                break
+            continue
 
         if choice == "2":
             print("\nDescribe what should be changed, added, or clarified.")

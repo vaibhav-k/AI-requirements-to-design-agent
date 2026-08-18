@@ -10,7 +10,11 @@ from Blob Storage — never fabricate it.
 
 Every route here still goes through ``load_owned`` first, exactly like the
 session routes: a session's artifact history is only visible to whoever
-may see the session itself.
+may see the session itself. Every route also requires one of the three
+functional App Roles (``Depends(require_role(*_ANY_ROLE))`` — Admin passes
+automatically, see ``app/security/auth.py``'s RBAC section): reading
+artifact history is available to any role, unlike the write routes in
+``app/api/routes/requirements.py``, which are gated per-action.
 
 * ``GET /requirements-runs/{id}/requirements/versions``
   — version numbers, oldest first.
@@ -28,6 +32,8 @@ may see the session itself.
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import ValidationError
 
@@ -37,9 +43,21 @@ from app.design.comparison import ArchitectureComparison, compare_architectures
 from app.design.models import SystemDesignArtifact
 from app.infrastructure.session_store import SessionStore
 from app.models import RequirementsArtifact, StoredArtifact
+from app.security.auth import ROLE_ARCHITECT, ROLE_REVIEWER, ROLE_USER, require_role
 from app.storage import ArtifactStore
 
-router = APIRouter(prefix="/requirements-runs", tags=["artifacts"])
+# Every route in this router needs the exact same role check — any of the
+# three functional roles (Admin passes automatically, see
+# `app/security/auth.py`) — unlike `requirements.py`, where each route is
+# gated on a different role, so it's applied once here at router
+# construction (`dependencies=`) rather than repeated on every `@router.get`.
+_ANY_ROLE = (ROLE_USER, ROLE_ARCHITECT, ROLE_REVIEWER)
+
+router = APIRouter(
+    prefix="/requirements-runs",
+    tags=["artifacts"],
+    dependencies=[Depends(require_role(*_ANY_ROLE))],
+)
 
 
 def _not_found(kind: str, version: int) -> HTTPException:
@@ -61,13 +79,12 @@ def _malformed(kind: str, version: int) -> HTTPException:
 
 @router.get(
     "/{session_id}/requirements/versions",
-    response_model=list[int],
 )
 def list_requirements_versions(
     session_id: str,
     request: Request,
-    store: SessionStore = Depends(get_session_store),  # noqa: B008
-    artifact_store: ArtifactStore = Depends(get_artifact_store),  # noqa: B008
+    store: Annotated[SessionStore, Depends(get_session_store)],  # noqa: B008
+    artifact_store: Annotated[ArtifactStore, Depends(get_artifact_store)],  # noqa: B008
 ) -> list[int]:
     load_owned(store, session_id, request)
     return artifact_store.list_requirements_versions(session_id)
@@ -75,14 +92,13 @@ def list_requirements_versions(
 
 @router.get(
     "/{session_id}/requirements/{version}",
-    response_model=RequirementsArtifact,
 )
 def get_requirements_version(
     session_id: str,
     version: int,
     request: Request,
-    store: SessionStore = Depends(get_session_store),  # noqa: B008
-    artifact_store: ArtifactStore = Depends(get_artifact_store),  # noqa: B008
+    store: Annotated[SessionStore, Depends(get_session_store)],  # noqa: B008
+    artifact_store: Annotated[ArtifactStore, Depends(get_artifact_store)],  # noqa: B008
 ) -> RequirementsArtifact:
     load_owned(store, session_id, request)
 
@@ -98,13 +114,12 @@ def get_requirements_version(
 
 @router.get(
     "/{session_id}/architecture/versions",
-    response_model=list[int],
 )
 def list_architecture_versions(
     session_id: str,
     request: Request,
-    store: SessionStore = Depends(get_session_store),  # noqa: B008
-    artifact_store: ArtifactStore = Depends(get_artifact_store),  # noqa: B008
+    store: Annotated[SessionStore, Depends(get_session_store)],  # noqa: B008
+    artifact_store: Annotated[ArtifactStore, Depends(get_artifact_store)],  # noqa: B008
 ) -> list[int]:
     load_owned(store, session_id, request)
     return artifact_store.list_design_versions(session_id)
@@ -130,15 +145,14 @@ def _load_architecture_version(
 
 @router.get(
     "/{session_id}/architecture/compare",
-    response_model=ArchitectureComparison,
 )
 def compare_architecture_versions(
     session_id: str,
     request: Request,
-    from_version: int = Query(..., alias="from"),
-    to_version: int = Query(..., alias="to"),
-    store: SessionStore = Depends(get_session_store),  # noqa: B008
-    artifact_store: ArtifactStore = Depends(get_artifact_store),  # noqa: B008
+    from_version: Annotated[int, Query(alias="from")],
+    to_version: Annotated[int, Query(alias="to")],
+    store: Annotated[SessionStore, Depends(get_session_store)],  # noqa: B008
+    artifact_store: Annotated[ArtifactStore, Depends(get_artifact_store)],  # noqa: B008
 ) -> ArchitectureComparison:
     """A structured diff between two persisted architecture versions.
 
@@ -168,14 +182,13 @@ def compare_architecture_versions(
 
 @router.get(
     "/{session_id}/architecture/{version}",
-    response_model=SystemDesignArtifact,
 )
 def get_architecture_version(
     session_id: str,
     version: int,
     request: Request,
-    store: SessionStore = Depends(get_session_store),  # noqa: B008
-    artifact_store: ArtifactStore = Depends(get_artifact_store),  # noqa: B008
+    store: Annotated[SessionStore, Depends(get_session_store)],  # noqa: B008
+    artifact_store: Annotated[ArtifactStore, Depends(get_artifact_store)],  # noqa: B008
 ) -> SystemDesignArtifact:
     load_owned(store, session_id, request)
     return _load_architecture_version(artifact_store, session_id, version)
@@ -186,8 +199,8 @@ def get_architecture_diagram(
     session_id: str,
     version: int,
     request: Request,
-    store: SessionStore = Depends(get_session_store),  # noqa: B008
-    artifact_store: ArtifactStore = Depends(get_artifact_store),  # noqa: B008
+    store: Annotated[SessionStore, Depends(get_session_store)],  # noqa: B008
+    artifact_store: Annotated[ArtifactStore, Depends(get_artifact_store)],  # noqa: B008
 ) -> Response:
     load_owned(store, session_id, request)
 

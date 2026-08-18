@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 
-import { ApiError } from "../api"
+import { describeError } from "../api"
 
 interface UseVersionedArtifactArgs<T> {
   sessionId: string
@@ -67,7 +67,7 @@ export function useVersionedArtifact<T>({
       })
       .catch((err: unknown) => {
         if (cancelled) return
-        setError(err instanceof ApiError ? err.message : "Could not load version history.")
+        setError(`Could not load version history: ${describeError(err)}`)
       })
     return () => {
       cancelled = true
@@ -93,7 +93,7 @@ export function useVersionedArtifact<T>({
       })
       .catch((err: unknown) => {
         if (cancelled) return
-        setError(err instanceof ApiError ? err.message : "Could not load this version.")
+        setError(`Could not load this version: ${describeError(err)}`)
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -117,7 +117,7 @@ export function useVersionedArtifact<T>({
       })
       .catch((err: unknown) => {
         if (cancelled) return
-        setError(err instanceof ApiError ? err.message : "Could not load the comparison version.")
+        setError(`Could not load the comparison version: ${describeError(err)}`)
       })
     return () => {
       cancelled = true
