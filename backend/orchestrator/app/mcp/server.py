@@ -6,10 +6,12 @@ from mcp.server.fastmcp import FastMCP as MCPServer
 
 from app.domain.design import SystemDesignArtifact
 from app.domain.requirements import RequirementsArtifact
+from app.domain.work_breakdown import WorkBreakdownArtifact
 from app.infrastructure.composition import (
     build_design_tools_client,
     build_requirements_use_case,
     build_system_design_use_case,
+    build_work_breakdown_use_case,
 )
 from app.infrastructure.sync_bridge import run_sync
 
@@ -21,7 +23,7 @@ mcp = MCPServer(
     ),
 )
 
-# Composition-root singletons, constructed once at import time — the same
+# Composition-root singletons, constructed once at import time - the same
 # shape the old ``RequirementsAnalyzer()``/``SystemDesignAnalyzer()``
 # facades were constructed with, except each is now the real use case
 # (``AnalyzeRequirementsUseCase``/``GenerateSystemDesignUseCase``) wired to
@@ -29,20 +31,23 @@ mcp = MCPServer(
 # rather than a facade class reading env vars in its own ``__init__``. See
 # ``tests/test_mcp.py`` for how tests replace ``.agent`` on these directly.
 #
-# ``_diagram_generator``/``_validator`` used to be the concrete, in-process
-# ``ArchitectureDiagramGenerator``/``ArchitectureValidator`` classes; both
-# moved to ``backend/tools-service`` as part of the tools-service split
-# (see README -> "Service Architecture"), so this external MCP server now
-# reaches them the same way the rest of the orchestrator does — via
-# ``McpToolsClient`` over the internal design-tools MCP gateway
-# (``backend/mcp-wrapper``). ``tests/test_mcp.py`` replaces these two
-# attributes directly, the same pattern it already uses for
-# ``_requirements_analyzer``/``_design_analyzer``.
+# ``_diagram_generator``/``_validator``/``_work_breakdown_exporter`` used
+# to be (or, for the exporter, would otherwise have to be) concrete,
+# in-process classes; all three live in ``backend/tools-service`` instead
+# as part of the tools-service split (see README -> "Service
+# Architecture"), so this external MCP server reaches them the same way
+# the rest of the orchestrator does - via ``McpToolsClient`` over the
+# internal design-tools MCP gateway (``backend/mcp-wrapper``).
+# ``tests/test_mcp.py`` replaces these attributes directly, the same
+# pattern it already uses for
+# ``_requirements_analyzer``/``_design_analyzer``/``_work_breakdown_analyzer``.
 _requirements_analyzer = build_requirements_use_case()
 _design_analyzer = build_system_design_use_case()
+_work_breakdown_analyzer = build_work_breakdown_use_case()
 _design_tools_client = build_design_tools_client()
 _diagram_generator = _design_tools_client
 _validator = _design_tools_client
+_work_breakdown_exporter = _design_tools_client
 
 
 @mcp.tool()
@@ -51,7 +56,7 @@ def analyze_requirements(
 ) -> str:
     """Analyze free-text input into a structured requirements artifact.
 
-    This is the entry point of the requirements-to-architecture flow — the
+    This is the entry point of the requirements-to-architecture flow - the
     first tool an MCP client calls, before generate_system_design.
 
     Args:
@@ -184,6 +189,102 @@ def generate_architecture_diagram(
     return _diagram_generator.generate(design)
 
 
+@mcp.tool()
+def generate_work_breakdown(
+    requirements_json: str,
+    design_json: str,
+) -> str:
+    """Generate a Feature -> Story -> Task work breakdown, traceable back
+    to the supplied requirements and architecture.
+
+    Args:
+        requirements_json: JSON RequirementsArtifact the breakdown must
+            trace back to (unchanged from the original
+            generate_system_design call).
+        design_json: JSON SystemDesignArtifact the breakdown must trace
+            back to.
+    """
+
+    requirements = RequirementsArtifact.model_validate_json(requirements_json)
+    design = SystemDesignArtifact.model_validate_json(design_json)
+
+    breakdown = run_sync(
+        _work_breakdown_analyzer.execute(requirements, design),
+        caller="generate_work_breakdown",
+    )
+
+    return breakdown.model_dump_json(indent=2)
+
+
+@mcp.tool()
+def refine_work_breakdown(
+    user_input: str,
+    requirements_json: str,
+    design_json: str,
+    breakdown_json: str,
+) -> str:
+    """Refine an existing work breakdown with new user input.
+
+    Uses the previous breakdown as context, the same as
+    refine_architecture: still-valid Features/Stories/Tasks are
+    preserved, and the requested change is applied on top rather than
+    regenerating the breakdown from scratch.
+
+    Args:
+        user_input: The requested change to apply to the previous breakdown.
+        requirements_json: JSON RequirementsArtifact the breakdown must
+            still trace back to.
+        design_json: JSON SystemDesignArtifact the breakdown must still
+            trace back to.
+        breakdown_json: JSON WorkBreakdownArtifact from a prior
+            generate_work_breakdown/refine_work_breakdown call.
+    """
+
+    requirements = RequirementsArtifact.model_validate_json(requirements_json)
+    design = SystemDesignArtifact.model_validate_json(design_json)
+    previous_breakdown = WorkBreakdownArtifact.model_validate_json(breakdown_json)
+
+    breakdown = run_sync(
+        _work_breakdown_analyzer.execute(
+            requirements,
+            design,
+            previous_breakdown=previous_breakdown,
+            refinement_input=user_input,
+        ),
+        caller="refine_work_breakdown",
+    )
+
+    return breakdown.model_dump_json(indent=2)
+
+
+@mcp.tool()
+def export_work_breakdown_csv(
+    breakdown_json: str,
+    requirements_json: str,
+    design_json: str,
+) -> str:
+    """Validate a work breakdown's traceability and render it to CSV.
+
+    Args:
+        breakdown_json: JSON WorkBreakdownArtifact from a prior
+            generate_work_breakdown/refine_work_breakdown call.
+        requirements_json: JSON RequirementsArtifact the breakdown was
+            generated from - used to catch fabricated/uncovered
+            requirement IDs.
+        design_json: JSON SystemDesignArtifact the breakdown was
+            generated from - used to catch fabricated/uncovered
+            architecture IDs.
+    """
+
+    breakdown = WorkBreakdownArtifact.model_validate_json(breakdown_json)
+    requirements = RequirementsArtifact.model_validate_json(requirements_json)
+    design = SystemDesignArtifact.model_validate_json(design_json)
+
+    export = _work_breakdown_exporter.export(breakdown, requirements, design)
+
+    return export.model_dump_json(indent=2)
+
+
 @mcp.resource(
     "requirements://schema",
 )
@@ -204,6 +305,18 @@ def design_schema() -> str:
 
     return json.dumps(
         SystemDesignArtifact.model_json_schema(),
+        indent=2,
+    )
+
+
+@mcp.resource(
+    "work-breakdown://schema",
+)
+def work_breakdown_schema() -> str:
+    """Return the WorkBreakdownArtifact JSON schema."""
+
+    return json.dumps(
+        WorkBreakdownArtifact.model_json_schema(),
         indent=2,
     )
 

@@ -40,7 +40,7 @@ def test_latest_design_version_is_zero_when_none_exist() -> None:
 
 
 def test_list_design_versions_returns_json_versions_sorted_ascending() -> None:
-    """SVGs and other sessions' blobs must not leak into the version list —
+    """SVGs and other sessions' blobs must not leak into the version list -
     only this session's own design *JSON* versions count."""
     store = make_store(
         [

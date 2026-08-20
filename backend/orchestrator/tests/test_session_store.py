@@ -172,7 +172,7 @@ def test_upsert_writes_unconditionally_when_the_record_has_no_etag(
     mock_cosmos_client: MagicMock,
 ) -> None:
     """A record that never round-tripped through Cosmos (no ``etag``) must
-    not accidentally pass ``etag=None`` as an if-match condition — that
+    not accidentally pass ``etag=None`` as an if-match condition - that
     writes unconditionally, same as before optimistic concurrency existed."""
     store = CosmosSessionStore(make_settings())
     store.start()
@@ -221,7 +221,7 @@ def test_upsert_raises_session_conflict_error_on_an_etag_mismatch(
 ) -> None:
     """A concurrent writer changing the session in between (Cosmos 412,
     ``CosmosAccessConditionFailedError``) must surface as the store's own
-    ``SessionConflictError`` — a caller (the web routes) can catch that
+    ``SessionConflictError`` - a caller (the web routes) can catch that
     without knowing anything about Cosmos or ETags."""
     store = CosmosSessionStore(make_settings())
     store.start()
@@ -243,7 +243,7 @@ def test_upsert_raises_session_conflict_error_on_an_etag_mismatch(
 def test_list_for_owner_returns_empty_for_a_falsy_owner_oid(
     mock_cosmos_client: MagicMock,
 ) -> None:
-    """No querying at all for an unowned/anonymous caller — matches
+    """No querying at all for an unowned/anonymous caller - matches
     ownership.py's "unowned records are nobody's" rule."""
     store = CosmosSessionStore(make_settings())
     store.start()
@@ -283,7 +283,7 @@ def test_list_for_owner_queries_cross_partition_and_validates_results(
 def test_list_all_queries_every_session_across_owners(
     mock_cosmos_client: MagicMock,
 ) -> None:
-    """Unlike ``list_for_owner``, no ``WHERE`` clause — used only for an
+    """Unlike ``list_for_owner``, no ``WHERE`` clause - used only for an
     Admin-role caller (see ``app/api/ownership.py``'s ``is_admin`` and
     ``list_runs`` in ``app/api/routes/requirements.py``)."""
     store = CosmosSessionStore(make_settings())
@@ -310,7 +310,7 @@ def test_close_is_a_noop_before_start_is_called() -> None:
 
 def test_close_does_not_call_anything_on_the_client() -> None:
     """Regression test: the synchronous ``azure.cosmos.CosmosClient`` has no
-    ``close()`` method — only ``azure.cosmos.aio.CosmosClient`` does. A plain
+    ``close()`` method - only ``azure.cosmos.aio.CosmosClient`` does. A plain
     ``MagicMock()`` would silently accept a wrongly-called ``.close()`` here
     and hide that mismatch, so this uses ``spec=CosmosClient`` to make an
     invalid call fail the way it would against the real SDK.

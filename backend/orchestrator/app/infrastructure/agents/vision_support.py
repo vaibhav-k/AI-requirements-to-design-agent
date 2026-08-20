@@ -4,9 +4,9 @@ Both ``image_classifier_agent.py`` and
 ``diagram_image_interpreter_agent.py`` need to turn an uploaded image's
 raw bytes into the multimodal ``Content`` part ``Agent.run`` accepts
 alongside a text prompt (via ``agent_framework.Message(role="user",
-contents=[...])`` — see either adapter for the full call site). Split
-out so that conversion — including the filename-extension-to-MIME-type
-mapping — has exactly one implementation instead of two copies drifting
+contents=[...])`` - see either adapter for the full call site). Split
+out so that conversion - including the filename-extension-to-MIME-type
+mapping - has exactly one implementation instead of two copies drifting
 apart.
 """
 

@@ -6,6 +6,6 @@ layer exists so a future UI (or any other HTTP client) can drive the same
 requirements → architecture pipeline behind Entra ID authentication.
 
 Endpoint-by-endpoint wiring of the requirements/architecture pipeline is not
-part of this first step — see the "Authentication" section of the README for
+part of this first step - see the "Authentication" section of the README for
 what is and isn't covered yet.
 """

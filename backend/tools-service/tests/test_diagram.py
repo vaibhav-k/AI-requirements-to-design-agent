@@ -69,7 +69,7 @@ def test_diagram_contains_external_dependency() -> None:
 
 def test_diagram_groups_components_into_domain_clusters() -> None:
     """Every distinct `DesignComponent.domain` renders as its own labeled
-    cluster — the fix for components scattering across the page with no
+    cluster - the fix for components scattering across the page with no
     visual grouping (see app/design/diagram.py's class docstring)."""
 
     design = SystemDesignArtifact(
@@ -98,7 +98,7 @@ def test_diagram_groups_components_into_domain_clusters() -> None:
 
 def test_diagram_blank_domain_falls_back_to_default_cluster() -> None:
     """A component with no `domain` set (the field's default) still
-    renders — grouped under the fallback domain label — rather than
+    renders - grouped under the fallback domain label - rather than
     erroring or being dropped."""
 
     design = SystemDesignArtifact(
@@ -182,7 +182,7 @@ def test_diagram_keeps_inline_labels_below_threshold() -> None:
 def test_diagram_dependency_label_shown_once_per_dependency() -> None:
     """A dependency fanning out to several components gets its name
     rendered as an inline edge label only once, not repeated on every
-    incoming edge — see `_add_dependency_edges`."""
+    incoming edge - see `_add_dependency_edges`."""
 
     components = [
         DesignComponent(id=f"c{i}", name=f"Component {i}", responsibility="x")
@@ -204,7 +204,7 @@ def test_diagram_dependency_label_shown_once_per_dependency() -> None:
     svg = ArchitectureDiagramGenerator().generate(design)
 
     # Once in the dependency's own node box, and once (not four times) as
-    # an edge label — the other three incoming edges carry the same
+    # an edge label - the other three incoming edges carry the same
     # dependency's tooltip but no repeated inline label text.
     assert svg.count("Shared Dependency") == 2
 
@@ -215,8 +215,8 @@ def test_diagram_handles_large_multi_domain_design_without_crashing() -> None:
     failed`) triggered by an earlier version of the diagram generator
     that nested `rank=same` row-grid subgraphs inside Graphviz clusters.
     That combination reliably crashed `dot` once a design had roughly
-    this many components/domains/interfaces — well within what a real
-    generated architecture can reach — so this design size is
+    this many components/domains/interfaces - well within what a real
+    generated architecture can reach - so this design size is
     deliberately chosen to have caught that regression."""
 
     domains = [f"Domain {i}" for i in range(10)]
@@ -264,17 +264,17 @@ def test_diagram_handles_large_multi_domain_design_without_crashing() -> None:
 def test_diagram_labeled_interface_uses_a_label_node_not_an_xlabel() -> None:
     """Regression test for a real overlap bug reported against a
     generated diagram: an interface's edge label rendered directly on
-    top of a neighboring node's caption text, and — separately — a
+    top of a neighboring node's caption text, and - separately - a
     label rendered visibly disconnected from the edge line it named.
 
     Both defects traced back to using Graphviz's `xlabel` (an
     auto-placed "exterior label" that reserves no layout space and can
     be positioned anywhere clear of *some* overlaps, or forced to
-    overlap, or dropped — see `_add_labeled_edge`'s docstring for the
+    overlap, or dropped - see `_add_labeled_edge`'s docstring for the
     full investigation, including why the `forcelabels="false"`
     alternative was tried and rejected). The fix routes a labeled edge
     through an intermediate borderless `shape="plaintext"` node instead,
-    so Graphviz's core layout — not the exterior-label heuristic —
+    so Graphviz's core layout - not the exterior-label heuristic -
     reserves real space for it and guarantees no overlap, while the
     label still sits directly on the connecting line.
 
@@ -303,7 +303,7 @@ def test_diagram_labeled_interface_uses_a_label_node_not_an_xlabel() -> None:
 
     svg = ArchitectureDiagramGenerator().generate(design)
 
-    # The label text appears exactly once — as its own node's caption —
+    # The label text appears exactly once - as its own node's caption -
     # not duplicated across a node and a separate xlabel.
     assert svg.count("Fetch Data") == 1
     assert "<title>__label__i1</title>" in svg

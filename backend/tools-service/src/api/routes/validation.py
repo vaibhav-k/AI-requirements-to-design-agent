@@ -1,9 +1,9 @@
-"""``POST /tools/designs/validate`` — check a design's semantic integrity.
+"""``POST /tools/designs/validate`` - check a design's semantic integrity.
 
 The deterministic half of what ``app/design/session.py``'s validator call
 used to do in-process on the orchestrator (see ``ArchitectureValidator``
 in ``src/infrastructure/validator.py``, moved here verbatim). Reached
-over MCP via ``backend/mcp-wrapper`` — see the root README's architecture
+over MCP via ``backend/mcp-wrapper`` - see the root README's architecture
 section.
 """
 
@@ -29,7 +29,7 @@ async def validate(design: SystemDesignArtifact) -> dict[str, object]:
     """Validate ``design``.
 
     Returns ``{"valid": true, "design": {...}}`` on success. On failure,
-    responds ``422`` with the validation error messages in ``detail`` —
+    responds ``422`` with the validation error messages in ``detail`` -
     the caller (``backend/mcp-wrapper``) surfaces that back to the
     orchestrator as an ``ArchitectureValidationError``, the same
     exception type this raised when validation ran in-process.

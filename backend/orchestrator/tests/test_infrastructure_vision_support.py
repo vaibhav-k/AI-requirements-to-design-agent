@@ -13,7 +13,7 @@ def test_image_content_maps_png_extension_to_media_type() -> None:
 
 
 def test_image_content_maps_jpg_extension_to_jpeg_media_type() -> None:
-    # ".jpg" -> "image/jpeg", not the literal (invalid) "image/jpg" —
+    # ".jpg" -> "image/jpeg", not the literal (invalid) "image/jpg" -
     # matches the previous `app.vision._data_url`'s extension handling.
     content = image_content(b"fake-bytes", "photo.jpg")
 

@@ -2,7 +2,7 @@
 
 Validates the ``Authorization: Bearer <token>`` header on incoming requests
 against the tenant's published signing keys (JWKS): no client secret is
-needed to *validate* a token — only to acquire one — so this stays purely
+needed to *validate* a token - only to acquire one - so this stays purely
 a resource-server concern.
 
 Authentication is opt-in via ``Settings.auth_enabled``. With it left off (the
@@ -11,7 +11,7 @@ local development and CI never need a real Entra ID tenant configured.
 
 This module also implements role-based access control (RBAC) on top of that
 authentication: ``require_role`` reads the Entra ID App Roles on the
-validated token (the standard ``roles`` claim — see ``roles_of``) and gates
+validated token (the standard ``roles`` claim - see ``roles_of``) and gates
 a route to callers holding one of a set of allowed roles. See the README's
 "RBAC" section for the app-role setup (App registration → App roles →
 Enterprise Applications assignment) and the permission matrix
@@ -45,7 +45,7 @@ def _jwks_uri(tenant_id: str) -> str:
 
 @lru_cache(maxsize=4)
 def _jwk_client(tenant_id: str) -> PyJWKClient:
-    """One key client per tenant, cached — it keeps the fetched keys in memory."""
+    """One key client per tenant, cached - it keeps the fetched keys in memory."""
     return PyJWKClient(_jwks_uri(tenant_id), cache_keys=True)
 
 
@@ -102,7 +102,7 @@ def decode_token(token: str, settings: Settings) -> dict[str, Any]:
     except jwt.InvalidAudienceError as exc:
         raise AuthError(
             "Token audience does not match this API. The client must send a "
-            f"token for client {settings.entra_client_id} — a token for "
+            f"token for client {settings.entra_client_id} - a token for "
             "Microsoft Graph or another resource is rejected here."
         ) from exc
     except jwt.InvalidIssuerError as exc:
@@ -123,7 +123,7 @@ def principal_of(claims: dict[str, Any]) -> str:
 def user_key(claims: dict[str, Any]) -> str | None:
     """The stable identifier an artifact/session should be owned by.
 
-    ``oid`` — the user's immutable object id in the directory — not
+    ``oid`` - the user's immutable object id in the directory - not
     ``preferred_username``/``upn``, which change when someone's email or
     surname does and would orphan their history. ``sub`` is the fallback:
     also stable, but pairwise per-application, so it only matches within
@@ -157,7 +157,7 @@ async def require_user(
 
     if credentials is None or not credentials.credentials:
         raise AuthError(
-            "Missing bearer token. You are not signed in — sign in and "
+            "Missing bearer token. You are not signed in - sign in and "
             "retry with a valid Entra ID access token in the "
             "Authorization header."
         )
@@ -168,14 +168,14 @@ async def require_user(
 
 
 # --------------------------------------------------------------------------- #
-# RBAC — Entra ID App Roles
+# RBAC - Entra ID App Roles
 # --------------------------------------------------------------------------- #
 
 # Defined in the app registration's "App roles" manifest blade and assigned
 # to users/groups under Enterprise Applications → this app → Users and
 # groups; Entra ID then populates the token's `roles` claim with whichever
-# of these the signed-in caller was assigned. Not a hierarchy — a caller may
-# hold more than one — except `ROLE_ADMIN`, which `require_role` always lets
+# of these the signed-in caller was assigned. Not a hierarchy - a caller may
+# hold more than one - except `ROLE_ADMIN`, which `require_role` always lets
 # through regardless of which roles it was asked to check for (see below).
 ROLE_ADMIN = "Admin"
 ROLE_ARCHITECT = "Architect"
@@ -189,10 +189,10 @@ def roles_of(claims: dict[str, Any]) -> frozenset[str]:
     """The Entra ID App Roles on a decoded token, or empty if none.
 
     Reads the standard ``roles`` claim (a JSON array of strings that Entra
-    ID populates from Enterprise Applications role assignments) — not
+    ID populates from Enterprise Applications role assignments) - not
     ``scp`` (delegated *scopes*, the audience/permission concept
     ``decode_token`` already validates) and not ``wids``/``groups`` (built-in
-    directory roles / security group membership) — App Roles are what this
+    directory roles / security group membership) - App Roles are what this
     project's RBAC is built on; see the README's "RBAC" section for why.
     """
     raw = claims.get("roles", [])
@@ -216,18 +216,18 @@ def require_role(
 ) -> Callable[[dict[str, Any]], Awaitable[frozenset[str]]]:
     """FastAPI dependency factory: 403 unless the caller holds one of ``allowed``.
 
-    ``ROLE_ADMIN`` always passes, no matter what ``allowed`` was asked for —
+    ``ROLE_ADMIN`` always passes, no matter what ``allowed`` was asked for -
     "Admins can manage users and access across the system" (see the
     README's "RBAC" section) means Admin is a superset of every other
     role's permissions, not a fifth, separately-granted capability. A caller
-    with no recognized role at all — including one with a perfectly valid
-    token — always fails, even a bare ``require_role(*ALL_APP_ROLES)`` on a
+    with no recognized role at all - including one with a perfectly valid
+    token - always fails, even a bare ``require_role(*ALL_APP_ROLES)`` on a
     read-only route: an authenticated user who was never assigned an app
     role gets 403, not silent full access, matching this project's decision
     to reject rather than default such a caller into the baseline role.
 
     A no-op when ``Settings.auth_enabled`` is ``False``, exactly like
-    ``require_user`` — local development and CI never need roles
+    ``require_user`` - local development and CI never need roles
     configured either, only a real Entra ID tenant with AUTH_ENABLED=true
     does.
     """

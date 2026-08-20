@@ -2,7 +2,7 @@
 
 Every other route test file (`test_requirements_routes.py`,
 `test_artifacts_routes.py`) runs with `AUTH_ENABLED=false`, where
-`require_role` is a no-op — deliberately, so those files stay focused on
+`require_role` is a no-op - deliberately, so those files stay focused on
 route *logic* rather than authorization. This file is the complement: it
 turns auth on, injects a bearer token with a chosen set of App Roles (via
 a patched `decode_token`, exactly like `test_web_main.py`'s
@@ -61,7 +61,7 @@ def make_design(**overrides: object) -> SystemDesignArtifact:
 
 @pytest.fixture
 def fakes() -> dict[str, MagicMock]:
-    # `.execute` must itself be awaitable — both `run_sync` (the sync
+    # `.execute` must itself be awaitable - both `run_sync` (the sync
     # routes) and a direct `await` (the async ones) call it the same way a
     # real ``AnalyzeRequirementsUseCase``/``GenerateSystemDesignUseCase``
     # would. See ``test_requirements_routes.py``'s ``fakes`` fixture for
@@ -89,7 +89,7 @@ def rbac_app(fakes: dict[str, MagicMock]) -> Iterator[TestClient]:
     dependency faked. ``get_settings`` is patched at both the
     app-construction and per-request layers (``app.security.auth`` and
     ``app.api.ownership`` each import their own bound name), mirroring
-    ``test_web_main.py``'s ``make_app`` — both patches are torn down after
+    ``test_web_main.py``'s ``make_app`` - both patches are torn down after
     the test via the ``finally`` block below.
     """
     settings = Settings(
@@ -114,7 +114,9 @@ def rbac_app(fakes: dict[str, MagicMock]) -> Iterator[TestClient]:
 
     settings_patcher = patch("app.security.auth.get_settings", return_value=settings)
     settings_patcher.start()
-    ownership_patcher = patch("app.api.ownership.get_settings", return_value=settings)
+    ownership_patcher = patch(
+        "app.api.ownership.get_settings", return_value=settings
+    )
     ownership_patcher.start()
 
     client = TestClient(app)
@@ -126,8 +128,8 @@ def rbac_app(fakes: dict[str, MagicMock]) -> Iterator[TestClient]:
 
 
 def auth_headers(roles: list[str], oid: str = "caller-1") -> dict[str, str]:
-    # `roles`/`oid` aren't read from the header — `with_claims` patches
-    # `decode_token` directly to return them — this just needs *some*
+    # `roles`/`oid` aren't read from the header - `with_claims` patches
+    # `decode_token` directly to return them - this just needs *some*
     # bearer token present so `require_user` doesn't 401 before the role
     # check even runs.
     return {"Authorization": "Bearer a.b.c"}
@@ -142,7 +144,7 @@ def with_claims(roles: list[str], oid: str = "caller-1") -> Any:
 
 
 # --------------------------------------------------------------------------- #
-# start_run — requires User
+# start_run - requires User
 # --------------------------------------------------------------------------- #
 
 
@@ -175,7 +177,7 @@ def test_start_run_rejected_for_reviewer_only(rbac_app: TestClient) -> None:
 
 def test_start_run_rejected_for_no_roles_at_all(rbac_app: TestClient) -> None:
     """A valid, authenticated caller with zero App Roles assigned is
-    rejected outright — per the explicit product decision to 403 rather
+    rejected outright - per the explicit product decision to 403 rather
     than default such a caller into a baseline role."""
     with with_claims([]):
         response = rbac_app.post(
@@ -204,7 +206,7 @@ def test_start_run_allowed_for_admin_role(
 
 
 # --------------------------------------------------------------------------- #
-# accept_run / refine_architecture — require Architect
+# accept_run / refine_architecture - require Architect
 # --------------------------------------------------------------------------- #
 
 
@@ -255,7 +257,7 @@ def test_accept_run_allowed_for_architect_role(
 
 
 # --------------------------------------------------------------------------- #
-# approve_run / reject_run — require Reviewer
+# approve_run / reject_run - require Reviewer
 # --------------------------------------------------------------------------- #
 
 
@@ -303,7 +305,7 @@ def test_approve_run_allowed_for_reviewer_role(
 
 
 # --------------------------------------------------------------------------- #
-# Reads — any of User/Architect/Reviewer (Admin implicit)
+# Reads - any of User/Architect/Reviewer (Admin implicit)
 # --------------------------------------------------------------------------- #
 
 
@@ -338,7 +340,7 @@ def test_get_run_rejected_for_no_roles(
 
 
 # --------------------------------------------------------------------------- #
-# Admin ownership bypass — Admin can act on someone else's session
+# Admin ownership bypass - Admin can act on someone else's session
 # --------------------------------------------------------------------------- #
 
 
@@ -415,7 +417,7 @@ def test_list_runs_returns_only_own_sessions_for_a_non_admin(
 
 
 # --------------------------------------------------------------------------- #
-# Artifacts router — any of User/Architect/Reviewer, Admin bypasses ownership
+# Artifacts router - any of User/Architect/Reviewer, Admin bypasses ownership
 # --------------------------------------------------------------------------- #
 
 
@@ -452,7 +454,7 @@ def test_list_requirements_versions_allowed_for_reviewer(
 
 
 # --------------------------------------------------------------------------- #
-# rename_run — any functional role, own session; Admin bypasses ownership
+# rename_run - any functional role, own session; Admin bypasses ownership
 # --------------------------------------------------------------------------- #
 
 

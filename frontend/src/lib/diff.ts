@@ -1,8 +1,8 @@
-/** Generic, id-keyed list diff — used to compare two versions of the same
+/** Generic, id-keyed list diff - used to compare two versions of the same
  * artifact list (functional_requirements, components, interfaces, ...)
  * without writing a bespoke comparator per field. Equality is structural
  * (JSON-stringify), which is sufficient here since every item comes from
- * the same backend Pydantic model on both sides — key order is stable
+ * the same backend Pydantic model on both sides - key order is stable
  * across versions of the same schema.
  */
 export interface ListDiff<T> {
@@ -45,7 +45,7 @@ export function diffByKey<T>(
   return { added, removed, changed, unchanged }
 }
 
-/** Diff a list of plain strings (data_requirements, constraints, ...) —
+/** Diff a list of plain strings (data_requirements, constraints, ...) -
  * these have no id, so the string itself is the key. */
 export function diffStringList(before: string[], after: string[]): ListDiff<string> {
   return diffByKey(before, after, (item) => item)

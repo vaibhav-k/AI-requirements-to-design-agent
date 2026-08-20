@@ -18,13 +18,13 @@ interface SidebarProps {
 }
 
 /** Display label for a session in the list: its own name once renamed,
- * otherwise a shortened id — same fallback the list used before renaming
+ * otherwise a shortened id - same fallback the list used before renaming
  * existed, kept so a never-renamed session still reads as identifiable. */
 function displayName(run: RequirementsRunView): string {
   return run.name ?? run.session_id.slice(0, 8)
 }
 
-/** One row in the sessions list — its own component so the inline rename
+/** One row in the sessions list - its own component so the inline rename
  * text field can hold its own "currently editing" state without that
  * leaking into the list-wide `runs` state Sidebar already manages. */
 function SessionRow({
@@ -41,7 +41,7 @@ function SessionRow({
   onSelect: () => void
   renameAllowed: boolean
   renameDisabledReason?: string
-  /** Whether to show `run.owner_name` under the session's label — only
+  /** Whether to show `run.owner_name` under the session's label - only
    * meaningful for an Admin browsing every session (see `Sidebar`'s
    * `isAdmin`); for anyone else every session shown is already their own. */
   showOwner: boolean
@@ -101,12 +101,12 @@ function SessionRow({
           <span className="session-item-name">{displayName(run)}</span>
           <span className="muted">
             {run.stage}
-            {/* Admin's cross-user view always names who started a session —
+            {/* Admin's cross-user view always names who started a session -
              * `run.owner_name` is only ever unset for a session created
              * before ownership tracking existed (or while AUTH_ENABLED was
              * off), which has no owner to report; labeling it explicitly
              * avoids that reading as a bug in this display. */}
-            {showOwner && ` — ${run.owner_name ?? "unowned"}`}
+            {showOwner && ` - ${run.owner_name ?? "unowned"}`}
           </span>
         </button>
         <button
@@ -127,7 +127,7 @@ function SessionRow({
 /** Session list, refactored from the original standalone `SessionList` view
  * into a persistent left rail so switching sessions doesn't leave the
  * conversation/artifact workspace. Purely a read of `GET /requirements-runs`
- * — no client-side session state is invented here, aside from the pane's
+ * - no client-side session state is invented here, aside from the pane's
  * own width/collapsed UI state (see `useResizableWidth` and `collapsed`
  * below), which is presentation only and never sent to the backend.
  */
@@ -148,7 +148,7 @@ export function Sidebar({ activeSessionId, onSelect, onStartNew, refreshKey }: S
   const { roles, loaded: rolesLoaded } = useCurrentUser()
   // Same "any functional role can act on what they own" shape the backend
   // enforces for rename (see app/api/routes/requirements.py's rename_run
-  // and the README's RBAC section) — defaults to allowed while roles
+  // and the README's RBAC section) - defaults to allowed while roles
   // haven't loaded yet, matching every other role gate in this app.
   const renameAllowed = !rolesLoaded || hasAnyRole(roles, [ROLE_USER, ROLE_ARCHITECT, ROLE_REVIEWER])
   const isAdmin = rolesLoaded && roles.includes(ROLE_ADMIN)
@@ -159,7 +159,7 @@ export function Sidebar({ activeSessionId, onSelect, onStartNew, refreshKey }: S
 
   // Polls `GET /requirements-runs` every few seconds so a session's stage
   // (e.g. "generating" → "architecture" once an accept/refine-architecture
-  // call another tab — or another user entirely, for an Admin — kicked off
+  // call another tab - or another user entirely, for an Admin - kicked off
   // finishes) shows up here without the person having to switch away and
   // back or start a new session to force `refreshKey` to bump. `refreshKey`
   // still triggers an immediate refetch on top of the interval (e.g. right
@@ -182,7 +182,7 @@ export function Sidebar({ activeSessionId, onSelect, onStartNew, refreshKey }: S
         .catch((err: unknown) => {
           if (cancelled) return
           // Only wipe the list to "empty" on the very first load, when
-          // there's nothing on screen to preserve — a poll that fails later
+          // there's nothing on screen to preserve - a poll that fails later
           // (a transient network blip) surfaces the error but leaves
           // whatever was already showing alone, rather than flashing to
           // "No sessions yet." every few seconds during an outage.

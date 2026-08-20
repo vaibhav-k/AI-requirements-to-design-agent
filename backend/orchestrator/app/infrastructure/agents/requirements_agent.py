@@ -6,7 +6,7 @@ git history before the Clean Architecture migration) with a Microsoft
 Agent Framework ``Agent``. See
 https://github.com/microsoft/agent-framework and
 https://learn.microsoft.com/en-us/agent-framework/overview/ for the
-framework itself — it's Microsoft's unified successor to Semantic Kernel
+framework itself - it's Microsoft's unified successor to Semantic Kernel
 and AutoGen, combining Semantic Kernel's enterprise features (typed,
 session-based state; middleware; telemetry) with AutoGen's simpler agent
 abstractions.
@@ -16,15 +16,15 @@ Wiring notes (verified directly against the installed
 the framework's public docs disagree with themselves across pages about
 class names as the API has evolved):
 
-* ``agent_framework.azure.AzureOpenAIChatClient`` — the class this
-  module would most naturally reach for — was removed upstream. Current
+* ``agent_framework.azure.AzureOpenAIChatClient`` - the class this
+  module would most naturally reach for - was removed upstream. Current
   guidance is to use ``agent_framework.openai.OpenAIChatClient`` for
   both OpenAI and Azure OpenAI, with explicit Azure routing via
   ``base_url``/``azure_endpoint``. See
   https://learn.microsoft.com/en-us/agent-framework/agents/providers/openai.
 * This project's ``AZURE_OPENAI_ENDPOINT`` is the Azure OpenAI *v1*
   endpoint (``https://<resource>.openai.azure.com/openai/v1/``, OpenAI
-  SDK-compatible) — the same value the old ``openai.OpenAI(base_url=...)``
+  SDK-compatible) - the same value the old ``openai.OpenAI(base_url=...)``
   call used directly. ``OpenAIChatClient`` accepts that shape via its own
   ``base_url`` parameter, so no new environment variable or API-version
   configuration is needed for this migration.
@@ -97,7 +97,7 @@ def _build_prompt(
     """Build the requirements analysis prompt.
 
     Content unchanged from the pre-migration ``RequirementsAnalyzer
-    ._build_prompt`` — only where it runs (behind a Microsoft Agent
+    ._build_prompt`` - only where it runs (behind a Microsoft Agent
     Framework ``Agent`` instead of a raw ``openai.OpenAI`` client) has
     changed.
     """

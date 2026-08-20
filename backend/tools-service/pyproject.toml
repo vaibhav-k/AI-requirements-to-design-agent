@@ -1,7 +1,7 @@
 [project]
 name = "design-tools-service"
 version = "0.1.0"
-description = "Deterministic architecture-diagram rendering and design validation for the AI Requirements to System Design Agent — see the root README's 'Service Architecture' section."
+description = "Deterministic architecture-diagram rendering and design validation for the AI Requirements to System Design Agent - see the root README's 'Service Architecture' section."
 requires-python = ">=3.12"
 
 [tool.mypy]
@@ -13,7 +13,7 @@ warn_unused_ignores = true
 [[tool.mypy.overrides]]
 # graphviz ships no inline types/py.typed marker, so strict mode would
 # otherwise flag every call into it (Digraph, .render(), etc.) as
-# untyped — same override backend/orchestrator's pyproject.toml carried
+# untyped - same override backend/orchestrator's pyproject.toml carried
 # for this exact package before diagram.py moved here.
 module = ["graphviz"]
 ignore_missing_imports = true

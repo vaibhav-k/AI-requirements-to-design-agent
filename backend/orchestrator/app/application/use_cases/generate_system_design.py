@@ -1,7 +1,7 @@
 """Use case: generate (or refine) a high-level system design.
 
 Same shape as ``analyze_requirements.py``'s ``AnalyzeRequirementsUseCase``
-— pure orchestration against a port, no knowledge of Azure, Microsoft
+- pure orchestration against a port, no knowledge of Azure, Microsoft
 Agent Framework, HTTP, or MCP.
 """
 
@@ -30,7 +30,7 @@ class GenerateSystemDesignUseCase:
 
         Refines ``previous_design`` (guided by ``refinement_input``)
         instead of generating one from scratch when ``previous_design``
-        is given — same contract the old ``SystemDesignAnalyzer.analyze``
+        is given - same contract the old ``SystemDesignAnalyzer.analyze``
         had. Failures surface as ``app.application.errors
         .DesignGenerationError``, raised by the port implementation.
         """

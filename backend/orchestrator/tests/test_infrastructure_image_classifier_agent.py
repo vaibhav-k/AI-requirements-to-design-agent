@@ -18,7 +18,7 @@ class _FakeAgentResponse:
 
 class _FakeUnderlyingAgent:
     """Stands in for the ``agent_framework.Agent`` instance returned by
-    ``OpenAIChatClient.as_agent`` — see
+    ``OpenAIChatClient.as_agent`` - see
     ``tests/test_infrastructure_requirements_agent.py`` for the same
     pattern applied to the requirements agent."""
 

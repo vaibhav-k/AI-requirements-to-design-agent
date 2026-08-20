@@ -2,7 +2,7 @@
 
 Moved here, verbatim aside from its imports, from ``app/storage.py`` as
 part of "Ports + adapters for storage" (see README -> "Clean
-Architecture Migration") — ``ArtifactStore`` is the concrete
+Architecture Migration") - ``ArtifactStore`` is the concrete
 ``app.application.ports.ArtifactStorePort`` implementation, the same
 "adapter lives in ``app.infrastructure``" home
 ``app.infrastructure.session_store.CosmosSessionStore`` already has for
@@ -49,7 +49,7 @@ AZURE_STORAGE_ENVIRONMENT = os.getenv(
 class ArtifactStore:
     """Store requirements and design artifacts in Azure Blob Storage.
 
-    Implements ``app.application.ports.ArtifactStorePort`` structurally —
+    Implements ``app.application.ports.ArtifactStorePort`` structurally -
     no inheritance needed, just matching method signatures.
     """
 
@@ -79,8 +79,8 @@ class ArtifactStore:
     def close(self) -> None:
         """Release the underlying HTTP session. Call once, at shutdown.
 
-        The CLI (``app/main.py``) never calls this — a short-lived process
-        exiting cleans up its own sockets — but the web API's ``lifespan``
+        The CLI (``app/main.py``) never calls this - a short-lived process
+        exiting cleans up its own sockets - but the web API's ``lifespan``
         does, since a long-running server should release what it opened.
         """
         self.service.close()
@@ -110,8 +110,8 @@ class ArtifactStore:
     def _list_versions(self, prefix: str, suffix: str) -> list[int]:
         """Every version number persisted under ``prefix`` ending in ``suffix``.
 
-        Blob names are the source of truth for what versions exist — nothing
-        else (no separate index/manifest) tracks it — since each version is
+        Blob names are the source of truth for what versions exist - nothing
+        else (no separate index/manifest) tracks it - since each version is
         its own immutable blob (``v{n}{suffix}``, never overwritten once
         written; see ``save_design_json``/``save_design_svg``'s
         ``overwrite=False``). Sorted ascending so callers get a stable,
@@ -163,7 +163,7 @@ class ArtifactStore:
         """The raw ``StoredArtifact`` JSON for one requirements version.
 
         ``None`` if that version was never persisted (or was for a
-        different session) — the caller decides what that means (404,
+        different session) - the caller decides what that means (404,
         typically).
         """
         blob_name = f"{self.environment}/{session_id}/requirements/v{version}.json"
@@ -179,7 +179,7 @@ class ArtifactStore:
         """The raw ``SystemDesignArtifact`` JSON for one design version.
 
         Unlike requirements' ``StoredArtifact`` envelope, this blob *is*
-        the design JSON directly — see ``ArchitectureSession.generate``.
+        the design JSON directly - see ``ArchitectureSession.generate``.
         """
         blob_name = f"{self.environment}/{session_id}/design/v{version}.json"
         return self._download(blob_name)
@@ -267,7 +267,7 @@ class ArtifactStore:
         """Persist the original uploaded requirements source document.
 
         Kept alongside (not instead of) the extracted-text ``StoredArtifact``
-        JSON saved by ``save`` — the extracted text feeds the requirements
+        JSON saved by ``save`` - the extracted text feeds the requirements
         pipeline, while this raw file is retained so the original upload
         stays retrievable (e.g. to re-review or re-extract later). The
         blob name preserves the original extension (``suffix``) since it
@@ -327,6 +327,67 @@ class ArtifactStore:
         )
 
         return content_bytes, content_type
+
+    def list_work_breakdown_versions(self, session_id: str) -> list[int]:
+        """Every work breakdown version persisted for this session, oldest
+        first - the work-breakdown analogue of ``list_design_versions``."""
+
+        prefix = f"{self.environment}/{session_id}/work-breakdown/"
+        return self._list_versions(prefix, ".json")
+
+    def get_work_breakdown_json(self, session_id: str, version: int) -> str | None:
+        """The raw ``WorkBreakdownArtifact`` JSON for one version."""
+
+        blob_name = f"{self.environment}/{session_id}/work-breakdown/v{version}.json"
+        return self._download(blob_name)
+
+    def save_work_breakdown_json(
+        self,
+        session_id: str,
+        version: int,
+        content: str,
+    ) -> str:
+        """Create a work breakdown JSON version without overwriting it."""
+
+        blob_name = f"{self.environment}/{session_id}/work-breakdown/v{version}.json"
+
+        try:
+            return self._upload(
+                blob_name=blob_name,
+                content=content,
+                content_type="application/json",
+                overwrite=False,
+            )
+        except ResourceExistsError as exc:
+            raise ArtifactVersionConflict(
+                f"Work breakdown version {version} already exists."
+            ) from exc
+
+    def get_work_breakdown_csv(self, session_id: str, version: int) -> str | None:
+        """The most recently rendered CSV export for one work breakdown version."""
+
+        blob_name = f"{self.environment}/{session_id}/work-breakdown/v{version}.csv"
+        return self._download(blob_name)
+
+    def save_work_breakdown_csv(
+        self,
+        session_id: str,
+        version: int,
+        content: str,
+    ) -> str:
+        """Persist (overwriting any previous export) the rendered CSV for
+        one work breakdown version - see ``ArtifactStorePort
+        .save_work_breakdown_csv`` for why this overwrites unlike
+        ``save_work_breakdown_json``."""
+
+        blob_name = f"{self.environment}/{session_id}/work-breakdown/v{version}.csv"
+
+        return self._upload(
+            blob_name=blob_name,
+            content=content,
+            content_type="text/csv",
+            overwrite=True,
+        )
 
     def _upload(
         self,

@@ -3,7 +3,7 @@ application layer's use cases.
 
 This is the final destination the "strangler fig" facades
 (``app/analyzer.py``, ``app/design/analyzer.py``, ``app/vision.py``) were
-always meant to lead to — see README -> "Clean Architecture Migration".
+always meant to lead to - see README -> "Clean Architecture Migration".
 Those facades used to read ``AZURE_OPENAI_*`` from the environment and
 construct their own ``AgentFrameworkXAgent`` adapter inside ``__init__``,
 which meant every one of them duplicated the same "require this env var
@@ -14,7 +14,7 @@ wired. Now that decision lives here, once, and every call site
 asks this module for a ready-to-use ``*UseCase`` instead of constructing
 one of the old facade classes.
 
-Nothing in ``app.application`` or ``app.domain`` imports this module —
+Nothing in ``app.application`` or ``app.domain`` imports this module -
 only presentation-layer composition roots do.
 """
 
@@ -28,6 +28,9 @@ from app.application.use_cases.analyze_requirements import AnalyzeRequirementsUs
 from app.application.use_cases.classify_image import ClassifyImageUseCase
 from app.application.use_cases.generate_system_design import (
     GenerateSystemDesignUseCase,
+)
+from app.application.use_cases.generate_work_breakdown import (
+    GenerateWorkBreakdownUseCase,
 )
 from app.application.use_cases.interpret_diagram_image import (
     InterpretDiagramImageUseCase,
@@ -43,6 +46,9 @@ from app.infrastructure.agents.requirements_agent import (
 )
 from app.infrastructure.agents.system_design_agent import (
     AgentFrameworkSystemDesignAgent,
+)
+from app.infrastructure.agents.work_breakdown_agent import (
+    AgentFrameworkWorkBreakdownAgent,
 )
 from app.infrastructure.tools_client import McpToolsClient
 
@@ -130,13 +136,30 @@ def build_diagram_interpreter_use_case(
     return InterpretDiagramImageUseCase(agent=agent)
 
 
+def build_work_breakdown_use_case(
+    model: str | None = None,
+) -> GenerateWorkBreakdownUseCase:
+    """Build a ``GenerateWorkBreakdownUseCase`` wired to a real Microsoft
+    Agent Framework agent, reading Azure OpenAI configuration from the
+    environment."""
+
+    agent = AgentFrameworkWorkBreakdownAgent(
+        api_key=_required_env("AZURE_OPENAI_API_KEY"),
+        endpoint=_required_env("AZURE_OPENAI_ENDPOINT"),
+        model=_resolved_model(model),
+    )
+
+    return GenerateWorkBreakdownUseCase(agent=agent)
+
+
 def build_design_tools_client() -> McpToolsClient:
-    """Build the ``McpToolsClient`` shared by ``DiagramRendererPort`` and
-    ``ArchitectureValidatorPort`` call sites (``app/api/dependencies.py``,
-    ``app/mcp/server.py``, ``app/main.py``).
+    """Build the ``McpToolsClient`` shared by ``DiagramRendererPort``,
+    ``ArchitectureValidatorPort``, and ``WorkBreakdownExporterPort`` call
+    sites (``app/api/dependencies.py``, ``app/mcp/server.py``,
+    ``app/main.py``).
 
     Unlike the agent builders above, this reads an optional (not required)
-    env var — ``DESIGN_TOOLS_MCP_URL`` — since a sensible default exists
+    env var - ``DESIGN_TOOLS_MCP_URL`` - since a sensible default exists
     for local development (``backend/mcp-wrapper``'s ``combined_main.py``
     default gateway host/port/path, see that service's README). Production
     deployments still set it explicitly to point at wherever

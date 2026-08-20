@@ -1,1 +1,1 @@
-"""MVP-2 system design and architecture generation."""
+"""System design and architecture generation."""

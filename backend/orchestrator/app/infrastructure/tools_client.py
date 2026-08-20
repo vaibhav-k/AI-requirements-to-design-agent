@@ -1,17 +1,22 @@
 """Reaches the design-tools MCP gateway (``backend/mcp-wrapper``) for the
-two deterministic capabilities that used to run in-process here:
-architecture diagram rendering and design validation.
+deterministic capabilities that used to (or, for work breakdown export,
+would otherwise have to) run in-process here: architecture diagram
+rendering, design validation, and work breakdown CSV export/traceability
+validation.
 
 Before the tools-service split (see README -> "Service Architecture"),
 ``DiagramRendererPort`` and ``ArchitectureValidatorPort`` were both
 implemented by plain, synchronous, in-process classes
 (``app.design.diagram.ArchitectureDiagramGenerator`` and
 ``app.design.validator.ArchitectureValidator``). Neither class exists in
-this codebase any more — both moved wholesale to ``backend/tools-service``,
+this codebase any more - both moved wholesale to ``backend/tools-service``,
 since they're pure, LLM-free logic and the orchestrator/tools-service
 split's whole point is keeping every LLM call (and only LLM calls) in the
-orchestrator. ``McpToolsClient`` is the adapter that now implements both
-ports by reaching that logic over the network instead:
+orchestrator. ``WorkBreakdownExporterPort`` (CSV rendering + traceability
+validation) is new work but follows the exact same reasoning - it has no
+LLM dependency either, so it was built directly in tools-service rather
+than in-process here. ``McpToolsClient`` is the adapter that implements
+all three ports by reaching that logic over the network instead:
 
     McpToolsClient (this class, sync ports)
         -> mcp.client.streamable_http + mcp.ClientSession (async MCP call)
@@ -20,7 +25,7 @@ ports by reaching that logic over the network instead:
         -> backend/tools-service
 
 This mirrors Parnell-AI-Persona-Agent's own orchestrator-side MCP client
-(``backend/orchestrator/src/infrastructure/mcp_client.py``) — same
+(``backend/orchestrator/src/infrastructure/mcp_client.py``) - same
 ``streamable_http_client`` + ``ClientSession`` shape, same
 "initialize, call_tool, done" lifecycle per call (no session reuse across
 calls, matching the wrapper's ``stateless_http=True`` server).
@@ -31,7 +36,7 @@ side's own design (see ``backend/mcp-wrapper/src/design_tools_wrapper
 
 - Both ports here are *synchronous* (``DiagramRendererPort.generate`` and
   ``ArchitectureValidatorPort.validate`` are plain sync methods, matching
-  every other call site's expectations — the CLI, the sync FastAPI
+  every other call site's expectations - the CLI, the sync FastAPI
   routes, and ``app/mcp/server.py``'s own tool functions never awaited
   the old in-process classes either). ``app.infrastructure.sync_bridge
   .run_sync`` bridges each call's async MCP round trip when the calling
@@ -39,15 +44,15 @@ side's own design (see ``backend/mcp-wrapper/src/design_tools_wrapper
   other ``run_sync`` caller, though, this client can also legitimately be
   reached from *inside* an already-running loop: the image-upload routes
   (``app/api/routes/requirements.py``'s ``start_run_from_upload``/
-  ``refine_run_from_upload``) are ``async def`` — they need to ``await``
-  classification/interpretation — and their sync helper
+  ``refine_run_from_upload``) are ``async def`` - they need to ``await``
+  classification/interpretation - and their sync helper
   ``_apply_diagram_to_record`` calls straight into
   ``ArchitectureSession.generate_from_design``, landing back on that same
   running loop. ``run_sync`` deliberately raises in that situation for
   its *other* callers (there, it usually means an async function forgot
   to ``await`` something), so this client can't reuse it unconditionally
-  — see ``_run_coro`` below for the fallback.
-- The mcp-wrapper's tools never raise on a tools-service-level failure —
+  - see ``_run_coro`` below for the fallback.
+- The mcp-wrapper's tools never raise on a tools-service-level failure -
   they always return an ``{"ok", "status_code", "body"}`` envelope (see
   that module's docstring for the rationale). This client is what
   inspects the envelope and raises the typed application error
@@ -67,8 +72,14 @@ from typing import Any, TypeVar
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-from app.application.errors import ArchitectureValidationError, DiagramGenerationError
+from app.application.errors import (
+    ArchitectureValidationError,
+    DiagramGenerationError,
+    WorkBreakdownExportError,
+)
 from app.domain.design import SystemDesignArtifact
+from app.domain.requirements import RequirementsArtifact
+from app.domain.work_breakdown import WorkBreakdownArtifact, WorkBreakdownExport
 from app.infrastructure.sync_bridge import run_sync
 
 logger = logging.getLogger(__name__)
@@ -81,12 +92,12 @@ def _run_coro(coro: Coroutine[object, object, T]) -> T:
     already has a running event loop.
 
     ``DiagramRendererPort``/``ArchitectureValidatorPort`` are documented
-    as plain synchronous methods, safe to call from anywhere — see this
+    as plain synchronous methods, safe to call from anywhere - see this
     module's docstring for why that includes, unlike every other
     ``run_sync`` caller, being invoked from inside an already-running
     loop. When there's no running loop, this is exactly ``run_sync``.
     When there is one, the coroutine runs to completion on a dedicated
-    worker thread with its own fresh event loop instead — that thread
+    worker thread with its own fresh event loop instead - that thread
     never touches the caller's loop or any object created on it, so
     there's no cross-loop sharing to worry about, just a second loop
     running the MCP round trip in parallel while the caller's own loop
@@ -101,9 +112,9 @@ def _run_coro(coro: Coroutine[object, object, T]) -> T:
     with ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(asyncio.run, coro).result()
 
-
 _GENERATE_DIAGRAM_TOOL = "generate_architecture_diagram_tool"
 _VALIDATE_DESIGN_TOOL = "validate_system_design_tool"
+_EXPORT_WORK_BREAKDOWN_TOOL = "export_work_breakdown_tool"
 
 
 def _extract_envelope(result: Any) -> dict[str, Any]:
@@ -112,10 +123,10 @@ def _extract_envelope(result: Any) -> dict[str, Any]:
 
     The design-tools wrapper's tools are declared ``-> str`` and return a
     JSON-encoded string (the envelope, serialized). FastMCP (as of the
-    ``mcp[cli]`` version this project pins — see this repo's
+    ``mcp[cli]`` version this project pins - see this repo's
     ``requirements.txt``) still populates ``structuredContent`` even for a
     plain ``-> str`` return, but as ``{"result": "<the raw JSON string>"}``
-    rather than the already-parsed envelope dict — confirmed empirically
+    rather than the already-parsed envelope dict - confirmed empirically
     against a live mcp-wrapper instance, since the alternative
     ("structuredContent already holds the parsed dict") looked equally
     plausible from the SDK's docs alone and would have been silently wrong
@@ -142,23 +153,22 @@ def _extract_envelope(result: Any) -> dict[str, Any]:
 
 
 class McpToolsClient:
-    """Implements ``DiagramRendererPort`` and ``ArchitectureValidatorPort``
-    by calling the design-tools MCP gateway.
+    """Implements ``DiagramRendererPort``, ``ArchitectureValidatorPort``,
+    and ``WorkBreakdownExporterPort`` by calling the design-tools MCP
+    gateway.
 
     Constructed once by ``app.infrastructure.composition
     .build_design_tools_client`` and shared across call sites the same way
-    the agent-backed use cases are — see that function's docstring for how
+    the agent-backed use cases are - see that function's docstring for how
     the gateway URL is configured.
     """
 
     def __init__(self, mcp_url: str) -> None:
         self._mcp_url = mcp_url
 
-    async def _call_tool(
-        self, tool_name: str, design: SystemDesignArtifact
+    async def _call_payload_tool(
+        self, tool_name: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
-        payload = {"design_json": design.model_dump_json()}
-
         async with streamable_http_client(self._mcp_url) as (read, write, _):
             async with ClientSession(read, write) as session:
                 await session.initialize()
@@ -171,6 +181,13 @@ class McpToolsClient:
             )
 
         return _extract_envelope(result)
+
+    async def _call_tool(
+        self, tool_name: str, design: SystemDesignArtifact
+    ) -> dict[str, Any]:
+        return await self._call_payload_tool(
+            tool_name, {"design_json": design.model_dump_json()}
+        )
 
     # -- DiagramRendererPort -------------------------------------------------
 
@@ -236,3 +253,50 @@ class McpToolsClient:
             )
 
         return SystemDesignArtifact.model_validate(validated)
+
+    # -- WorkBreakdownExporterPort --------------------------------------------
+
+    def export(
+        self,
+        breakdown: WorkBreakdownArtifact,
+        requirements: RequirementsArtifact,
+        design: SystemDesignArtifact,
+    ) -> WorkBreakdownExport:
+        """Validate ``breakdown`` and render it to CSV via the design-tools
+        gateway.
+
+        Raises ``WorkBreakdownExportError`` if tools-service reports an
+        export failure (or if the gateway/tools-service can't be reached
+        at all).
+        """
+
+        payload = {
+            "breakdown_json": breakdown.model_dump_json(),
+            "requirements_json": requirements.model_dump_json(),
+            "design_json": design.model_dump_json(),
+        }
+
+        try:
+            envelope = _run_coro(
+                self._call_payload_tool(_EXPORT_WORK_BREAKDOWN_TOOL, payload)
+            )
+        except Exception as exc:  # noqa: BLE001 - re-raised as the port's own error type
+            raise WorkBreakdownExportError(
+                f"Failed to reach the design-tools service for work "
+                f"breakdown export: {exc}"
+            ) from exc
+
+        if not envelope.get("ok", False):
+            detail = envelope.get("body", {}).get(
+                "detail", "Unknown work breakdown export failure."
+            )
+            raise WorkBreakdownExportError(detail)
+
+        export = envelope.get("body")
+        if not export:
+            raise WorkBreakdownExportError(
+                "design-tools service reported success but returned no "
+                "work breakdown export."
+            )
+
+        return WorkBreakdownExport.model_validate(export)

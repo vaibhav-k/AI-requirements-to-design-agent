@@ -6,12 +6,14 @@ from app.domain.design import (
     DesignComponent,
     SystemDesignArtifact,
 )
-from app.domain.requirements import RequirementsArtifact
+from app.domain.requirements import Requirement, RequirementsArtifact
+from app.domain.work_breakdown import WorkBreakdownArtifact, WorkBreakdownExport
 from app.mcp import server as mcp_server
 from app.mcp.server import (
     design_schema,
     requirements_schema,
     validate_system_design,
+    work_breakdown_schema,
 )
 
 
@@ -19,7 +21,7 @@ class _FakeRequirementsAgent:
     """A ``RequirementsAgentPort`` fake standing in for the Microsoft
     Agent Framework-backed adapter, injected into the module-level
     ``_requirements_analyzer`` singleton for the duration of a test (see
-    ``mock_requirements_agent`` below) — no real Azure OpenAI call, no
+    ``mock_requirements_agent`` below) - no real Azure OpenAI call, no
     network. Mirrors the pattern in ``tests/test_analyzer.py``."""
 
     def __init__(self, artifact: RequirementsArtifact) -> None:
@@ -58,7 +60,7 @@ def _requirements_artifact(
 @pytest.fixture
 def mock_requirements_agent() -> _FakeRequirementsAgent:
     """Replace the module-level `_requirements_analyzer`'s underlying
-    ``RequirementsAgentPort`` with a fake for the duration of a test — it's
+    ``RequirementsAgentPort`` with a fake for the duration of a test - it's
     a singleton ``AnalyzeRequirementsUseCase`` constructed at import time by
     ``app.mcp.server`` (via ``app.infrastructure.composition``), so its
     ``.agent`` is patched in place rather than re-instantiating the whole
@@ -70,7 +72,7 @@ def mock_requirements_agent() -> _FakeRequirementsAgent:
 
 
 class _FakeSystemDesignAgent:
-    """A ``SystemDesignAgentPort`` fake — the design-generation analogue
+    """A ``SystemDesignAgentPort`` fake - the design-generation analogue
     of ``_FakeRequirementsAgent`` above, injected into the module-level
     ``_design_analyzer`` singleton for the duration of a test."""
 
@@ -93,7 +95,7 @@ class _FakeSystemDesignAgent:
 @pytest.fixture
 def mock_design_agent() -> _FakeSystemDesignAgent:
     """Replace the module-level `_design_analyzer`'s underlying
-    ``SystemDesignAgentPort`` with a fake for the duration of a test —
+    ``SystemDesignAgentPort`` with a fake for the duration of a test -
     the design-generation analogue of `mock_requirements_agent` above."""
 
     fake_agent = _FakeSystemDesignAgent(
@@ -193,7 +195,7 @@ def test_refine_architecture_tool_passes_previous_design_as_context(
 
 class _FakeDesignToolsClient:
     """A ``DiagramRendererPort``/``ArchitectureValidatorPort`` fake standing
-    in for ``app.infrastructure.tools_client.McpToolsClient`` — no real MCP
+    in for ``app.infrastructure.tools_client.McpToolsClient`` - no real MCP
     round trip to ``backend/mcp-wrapper``/``backend/tools-service``, the
     same "patch the module-level singleton's dependency" pattern
     ``mock_requirements_agent``/``mock_design_agent`` use above.
@@ -265,3 +267,171 @@ def test_mcp_generate_diagram_tool_validates_then_renders(
     assert svg == "<svg></svg>"
     assert len(mock_design_tools_client.validate_calls) == 1
     assert len(mock_design_tools_client.generate_calls) == 1
+
+
+def test_work_breakdown_schema_is_valid_json() -> None:
+    result = work_breakdown_schema()
+
+    schema = json.loads(result)
+
+    assert "properties" in schema
+    assert "features" in schema["properties"]
+    assert "ambiguities" in schema["properties"]
+
+
+class _FakeWorkBreakdownAgent:
+    """A ``WorkBreakdownAgentPort`` fake - the work-breakdown analogue of
+    ``_FakeSystemDesignAgent`` above, injected into the module-level
+    ``_work_breakdown_analyzer`` singleton for the duration of a test."""
+
+    def __init__(self, breakdown: WorkBreakdownArtifact) -> None:
+        self.breakdown = breakdown
+        self.calls: list[
+            tuple[
+                RequirementsArtifact,
+                SystemDesignArtifact,
+                WorkBreakdownArtifact | None,
+                str | None,
+            ]
+        ] = []
+
+    async def generate(
+        self,
+        requirements: RequirementsArtifact,
+        design: SystemDesignArtifact,
+        previous_breakdown: WorkBreakdownArtifact | None = None,
+        refinement_input: str | None = None,
+    ) -> WorkBreakdownArtifact:
+        self.calls.append((requirements, design, previous_breakdown, refinement_input))
+        return self.breakdown
+
+
+@pytest.fixture
+def mock_work_breakdown_agent() -> _FakeWorkBreakdownAgent:
+    """Replace the module-level ``_work_breakdown_analyzer``'s underlying
+    ``WorkBreakdownAgentPort`` with a fake for the duration of a test."""
+
+    fake_agent = _FakeWorkBreakdownAgent(WorkBreakdownArtifact())
+    mcp_server._work_breakdown_analyzer.agent = fake_agent
+    return fake_agent
+
+
+def test_generate_work_breakdown_tool_returns_structured_artifact(
+    mock_work_breakdown_agent: _FakeWorkBreakdownAgent,
+) -> None:
+    requirements = _requirements_artifact("A todo app for small teams.").model_copy(
+        update={
+            "functional_requirements": [
+                Requirement(
+                    id="FR-001",
+                    description="Users can create a task.",
+                    priority="high",
+                )
+            ]
+        }
+    )
+    design = SystemDesignArtifact(
+        architecture_summary="A design.",
+        components=[
+            DesignComponent(id="C-001", name="API", responsibility="Serves requests.")
+        ],
+    )
+    breakdown = WorkBreakdownArtifact()
+    mock_work_breakdown_agent.breakdown = breakdown
+
+    result = mcp_server.generate_work_breakdown(
+        requirements.model_dump_json(),
+        design.model_dump_json(),
+    )
+
+    parsed = WorkBreakdownArtifact.model_validate_json(result)
+
+    assert parsed == breakdown
+    assert len(mock_work_breakdown_agent.calls) == 1
+
+
+def test_refine_work_breakdown_tool_passes_previous_breakdown_as_context(
+    mock_work_breakdown_agent: _FakeWorkBreakdownAgent,
+) -> None:
+    requirements = _requirements_artifact("A todo app for small teams.").model_copy(
+        update={
+            "functional_requirements": [
+                Requirement(
+                    id="FR-001",
+                    description="Users can create a task.",
+                    priority="high",
+                )
+            ]
+        }
+    )
+    design = SystemDesignArtifact(
+        architecture_summary="A design.",
+        components=[
+            DesignComponent(id="C-001", name="API", responsibility="Serves requests.")
+        ],
+    )
+    previous = WorkBreakdownArtifact()
+    refined = WorkBreakdownArtifact()
+    mock_work_breakdown_agent.breakdown = refined
+
+    result = mcp_server.refine_work_breakdown(
+        "Add a delete-task story.",
+        requirements.model_dump_json(),
+        design.model_dump_json(),
+        previous.model_dump_json(),
+    )
+
+    parsed = WorkBreakdownArtifact.model_validate_json(result)
+
+    assert parsed == refined
+
+    [(sent_requirements, sent_design, sent_previous, sent_refinement_input)] = (
+        mock_work_breakdown_agent.calls
+    )
+    assert sent_requirements == requirements
+    assert sent_design == design
+    assert sent_previous == previous
+    assert sent_refinement_input == "Add a delete-task story."
+
+
+class _FakeWorkBreakdownExporter:
+    """A ``WorkBreakdownExporterPort`` fake standing in for
+    ``McpToolsClient`` - the work-breakdown analogue of
+    ``_FakeDesignToolsClient`` above."""
+
+    def __init__(self, export: WorkBreakdownExport) -> None:
+        self.export_result = export
+        self.export_calls: list[
+            tuple[WorkBreakdownArtifact, RequirementsArtifact, SystemDesignArtifact]
+        ] = []
+
+    def export(
+        self,
+        breakdown: WorkBreakdownArtifact,
+        requirements: RequirementsArtifact,
+        design: SystemDesignArtifact,
+    ) -> WorkBreakdownExport:
+        self.export_calls.append((breakdown, requirements, design))
+        return self.export_result
+
+
+def test_export_work_breakdown_csv_tool(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_exporter = _FakeWorkBreakdownExporter(
+        WorkBreakdownExport(csv_text="feature,story,task\r\n")
+    )
+    monkeypatch.setattr(mcp_server, "_work_breakdown_exporter", fake_exporter)
+
+    requirements = _requirements_artifact("A todo app for small teams.")
+    design = SystemDesignArtifact(architecture_summary="A design.")
+    breakdown = WorkBreakdownArtifact()
+
+    result = mcp_server.export_work_breakdown_csv(
+        breakdown.model_dump_json(),
+        requirements.model_dump_json(),
+        design.model_dump_json(),
+    )
+
+    parsed = WorkBreakdownExport.model_validate_json(result)
+
+    assert parsed.csv_text == "feature,story,task\r\n"
+    assert len(fake_exporter.export_calls) == 1

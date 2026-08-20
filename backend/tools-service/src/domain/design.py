@@ -4,15 +4,15 @@
 This is a deliberate, intentional duplication, not an oversight: tools-service
 is an independently deployable microservice (own ``requirements.txt``, own
 Dockerfile, own process) with zero import dependency on the orchestrator's
-codebase — the same pattern Parnell-AI-Persona-Agent's ``backend/tools-service``
+codebase - the same pattern Parnell-AI-Persona-Agent's ``backend/tools-service``
 uses for its own ``domain/tools/*/models.py``. Keeping these Pydantic models
 byte-for-byte identical to the orchestrator's is a *process* concern (review
 both when the shared shape changes), not something a shared package solves
-for free — Parnell doesn't share one either, for the same reason: it would
+for free - Parnell doesn't share one either, for the same reason: it would
 re-couple two services whose whole point is independent deployability.
 
 Only the subset ``diagram.py``/``validator.py`` actually need is reproduced
-here — ``ApprovalDecision`` (session/workflow state, not a rendering or
+here - ``ApprovalDecision`` (session/workflow state, not a rendering or
 validation concern) stays orchestrator-only.
 """
 

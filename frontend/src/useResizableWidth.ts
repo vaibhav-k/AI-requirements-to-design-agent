@@ -7,7 +7,7 @@ interface UseResizableWidthOptions {
   min: number
   max: number
   /** `localStorage` key this panel's width is persisted under, so a drag
-   * survives a reload — scoped per-panel (e.g. "sidebar-width" vs.
+   * survives a reload - scoped per-panel (e.g. "sidebar-width" vs.
    * "workspace-conversation-width") since each is independent. */
   storageKey: string
 }
@@ -22,7 +22,7 @@ function readStoredWidth(storageKey: string, min: number, max: number, fallback:
 
 /** Drag-to-resize for a single panel's width, backed by a draggable handle
  * on its trailing edge. Returns the current width plus a `startDrag`
- * mousedown handler to attach to that handle — dragging right widens the
+ * mousedown handler to attach to that handle - dragging right widens the
  * panel, dragging left narrows it, clamped to `[min, max]`.
  *
  * Deliberately plain `mousedown`/`mousemove`/`mouseup` on `window` rather

@@ -1,6 +1,6 @@
 """Ports (abstract boundaries) the application layer depends on.
 
-Each port is a ``typing.Protocol`` — structural typing, so an
+Each port is a ``typing.Protocol`` - structural typing, so an
 infrastructure adapter satisfies a port simply by implementing its
 methods, with no inheritance or registration required. This keeps
 ``app.infrastructure`` free to depend on ``app.application`` (to know
@@ -16,6 +16,7 @@ from app.domain.design import SystemDesignArtifact
 from app.domain.requirements import RequirementsArtifact, StoredArtifact
 from app.domain.session import SessionRecord
 from app.domain.vision import ImageClassification
+from app.domain.work_breakdown import WorkBreakdownArtifact, WorkBreakdownExport
 
 
 class RequirementsAgentPort(Protocol):
@@ -25,7 +26,7 @@ class RequirementsAgentPort(Protocol):
     .AgentFrameworkRequirementsAgent``, which is backed by Microsoft
     Agent Framework. The application layer (see
     ``app.application.use_cases.analyze_requirements``) depends only on
-    this method signature — it has no idea Agent Framework, Azure
+    this method signature - it has no idea Agent Framework, Azure
     OpenAI, or any particular model provider exists.
     """
 
@@ -43,7 +44,7 @@ class SystemDesignAgentPort(Protocol):
 
     Implemented by ``app.infrastructure.agents.system_design_agent
     .AgentFrameworkSystemDesignAgent``, which is backed by Microsoft
-    Agent Framework — the design-generation analogue of
+    Agent Framework - the design-generation analogue of
     ``RequirementsAgentPort``. See
     ``app.application.use_cases.generate_system_design``.
     """
@@ -97,7 +98,7 @@ class ArtifactStorePort(Protocol):
     """Persists/retrieves versioned requirements and design artifacts.
 
     Implemented by ``app.infrastructure.artifact_store.ArtifactStore``,
-    backed by Azure Blob Storage. Every method here is synchronous —
+    backed by Azure Blob Storage. Every method here is synchronous -
     unlike the agent ports above, nothing in this project's call sites
     (the CLI, the sync FastAPI routes, the MCP server) needs an async
     storage call badly enough to justify every implementation paying for
@@ -167,9 +168,48 @@ class ArtifactStorePort(Protocol):
     def get_source_file(
         self, session_id: str, version: int
     ) -> tuple[bytes, str] | None:
-        """The original uploaded file for a requirements version — returns
+        """The original uploaded file for a requirements version - returns
         ``(content_bytes, content_type)``, or ``None`` if that version
         wasn't created from an uploaded file."""
+        ...
+
+    def list_work_breakdown_versions(self, session_id: str) -> list[int]:
+        """Every work breakdown version persisted for this session, oldest
+        first - the work-breakdown analogue of ``list_design_versions``."""
+        ...
+
+    def get_work_breakdown_json(self, session_id: str, version: int) -> str | None:
+        """The raw ``WorkBreakdownArtifact`` JSON for one version, or
+        ``None`` if it was never persisted."""
+        ...
+
+    def save_work_breakdown_json(
+        self, session_id: str, version: int, content: str
+    ) -> str:
+        """Create a work breakdown JSON version without overwriting it.
+
+        Raises ``app.application.errors.ArtifactVersionConflict`` if
+        ``version`` already exists for this session - same immutable-once-
+        written contract as ``save_design_json``.
+        """
+        ...
+
+    def get_work_breakdown_csv(self, session_id: str, version: int) -> str | None:
+        """The most recently rendered CSV export for one work breakdown
+        version, or ``None`` if it was never exported."""
+        ...
+
+    def save_work_breakdown_csv(
+        self, session_id: str, version: int, content: str
+    ) -> str:
+        """Persist (overwriting any previous export) the rendered CSV for
+        one work breakdown version.
+
+        Unlike ``save_work_breakdown_json``, this overwrites - the CSV is a
+        derived, re-computable artifact of an already-persisted version,
+        not itself a new version, so exporting the same version twice must
+        not conflict.
+        """
         ...
 
     def close(self) -> None:
@@ -183,7 +223,7 @@ class SessionStorePort(Protocol):
 
     Implemented by
     ``app.infrastructure.session_store.CosmosSessionStore``, backed by
-    Cosmos DB. Synchronous for the same reason ``ArtifactStorePort`` is —
+    Cosmos DB. Synchronous for the same reason ``ArtifactStorePort`` is -
     see its docstring.
     """
 
@@ -203,7 +243,7 @@ class SessionStorePort(Protocol):
         ...
 
     def list_all(self) -> list[SessionRecord]:
-        """Every session across every owner, newest first — for
+        """Every session across every owner, newest first - for
         Admin-role callers only (see ``app.api.ownership``)."""
         ...
 
@@ -214,7 +254,7 @@ class DiagramRendererPort(Protocol):
     Implemented by ``app.infrastructure.tools_client.McpToolsClient``,
     which reaches the deterministic, Graphviz-backed renderer that used to
     live in-process (``app.design.diagram.ArchitectureDiagramGenerator``)
-    over MCP instead — see README -> "Service Architecture" for the full
+    over MCP instead - see README -> "Service Architecture" for the full
     orchestrator -> mcp-wrapper -> tools-service call path. Wired through
     ``app.infrastructure.composition`` like the agent ports above (unlike
     before the split, this now needs the tools-service's MCP endpoint URL,
@@ -234,7 +274,7 @@ class DiagramRendererPort(Protocol):
 class ArchitectureValidatorPort(Protocol):
     """Validates the semantic integrity of a structured design.
 
-    Implemented by ``app.infrastructure.tools_client.McpToolsClient`` —
+    Implemented by ``app.infrastructure.tools_client.McpToolsClient`` -
     the validation analogue of ``DiagramRendererPort`` above, reaching the
     deterministic validator that used to live in-process
     (``app.design.validator.ArchitectureValidator``) over the same MCP
@@ -246,5 +286,55 @@ class ArchitectureValidatorPort(Protocol):
 
         Raises ``app.application.errors.ArchitectureValidationError`` if
         validation fails.
+        """
+        ...
+
+
+class WorkBreakdownAgentPort(Protocol):
+    """Turns requirements + architecture into a structured
+    ``WorkBreakdownArtifact`` (Feature -> Story -> Task).
+
+    Implemented by ``app.infrastructure.agents.work_breakdown_agent
+    .AgentFrameworkWorkBreakdownAgent``, which is backed by Microsoft
+    Agent Framework - the work-breakdown analogue of
+    ``SystemDesignAgentPort``. See
+    ``app.application.use_cases.generate_work_breakdown``.
+    """
+
+    async def generate(
+        self,
+        requirements: RequirementsArtifact,
+        design: SystemDesignArtifact,
+        previous_breakdown: WorkBreakdownArtifact | None = None,
+        refinement_input: str | None = None,
+    ) -> WorkBreakdownArtifact:
+        """Generate (or refine, if ``previous_breakdown`` is given) a work breakdown."""
+        ...
+
+
+class WorkBreakdownExporterPort(Protocol):
+    """Renders a structured work breakdown into an import-ready CSV, with
+    traceability validation against the requirements/architecture it was
+    generated from.
+
+    Implemented by ``app.infrastructure.tools_client.McpToolsClient`` -
+    the work-breakdown analogue of ``DiagramRendererPort``/
+    ``ArchitectureValidatorPort`` above, reaching the deterministic
+    exporter that lives in ``backend/tools-service`` (never in-process
+    here) over the same design-tools MCP path. See README -> "Service
+    Architecture".
+    """
+
+    def export(
+        self,
+        breakdown: WorkBreakdownArtifact,
+        requirements: RequirementsArtifact,
+        design: SystemDesignArtifact,
+    ) -> WorkBreakdownExport:
+        """Validate ``breakdown`` against ``requirements``/``design`` and
+        render it to CSV.
+
+        Raises ``app.application.errors.WorkBreakdownExportError`` if the
+        tools-service call fails.
         """
         ...

@@ -10,7 +10,7 @@ interface DiffListProps<T> {
 /** Renders a diffed list: unchanged items plain, added/removed/changed
  * items tagged and colored. Used identically for requirements lists
  * (actors, functional requirements, ...) and architecture lists
- * (components, interfaces, ...) — the diff shape is the same either way. */
+ * (components, interfaces, ...) - the diff shape is the same either way. */
 export function DiffList<T>({ diff, renderItem, keyOf, emptyLabel }: DiffListProps<T>) {
   const { added, removed, changed, unchanged } = diff
   const isEmpty =

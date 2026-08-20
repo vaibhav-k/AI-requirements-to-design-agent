@@ -1,7 +1,7 @@
 """Unit tests for the design-tools wrapper's httpx translation layer.
 
 Mocks ``httpx.AsyncClient`` rather than running a real tools-service
-process — this wrapper's only job is "deserialize, POST, wrap the
+process - this wrapper's only job is "deserialize, POST, wrap the
 response in an envelope, reserialize", so that's what's under test, not
 tools-service's own behavior (covered by ``backend/tools-service/tests``).
 """
@@ -12,12 +12,29 @@ import json
 
 import httpx
 import pytest
+
 from src.design_tools_wrapper.application.tool_calls import (
+    export_work_breakdown,
     generate_architecture_diagram,
     validate_system_design,
 )
 
 _DESIGN_JSON = json.dumps({"architecture_summary": "A design.", "components": []})
+_REQUIREMENTS_JSON = json.dumps(
+    {
+        "summary": "s",
+        "business_goal": "g",
+        "actors": [],
+        "functional_requirements": [],
+        "non_functional_requirements": [],
+        "data_requirements": [],
+        "integration_requirements": [],
+        "constraints": [],
+        "assumptions": [],
+        "open_questions": [],
+    }
+)
+_BREAKDOWN_JSON = json.dumps({"features": [], "ambiguities": []})
 
 
 class _FakeResponse:
@@ -79,3 +96,43 @@ async def test_validate_system_design_envelope_on_failure(
     assert result["ok"] is False
     assert result["status_code"] == 422
     assert "unique" in result["body"]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_export_work_breakdown_envelope_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_client = _FakeAsyncClient(
+        _FakeResponse(200, {"csv_text": "feature,story,task\r\n"})
+    )
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: fake_client)
+
+    result = json.loads(
+        await export_work_breakdown(_BREAKDOWN_JSON, _REQUIREMENTS_JSON, _DESIGN_JSON)
+    )
+
+    assert result == {
+        "ok": True,
+        "status_code": 200,
+        "body": {"csv_text": "feature,story,task\r\n"},
+    }
+    assert fake_client.posted_to is not None
+    assert fake_client.posted_to.endswith("/tools/work-breakdown/export")
+
+
+@pytest.mark.asyncio
+async def test_export_work_breakdown_envelope_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_client = _FakeAsyncClient(
+        _FakeResponse(422, {"detail": "Task has no traceability."})
+    )
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: fake_client)
+
+    result = json.loads(
+        await export_work_breakdown(_BREAKDOWN_JSON, _REQUIREMENTS_JSON, _DESIGN_JSON)
+    )
+
+    assert result["ok"] is False
+    assert result["status_code"] == 422
+    assert "traceability" in result["body"]["detail"]

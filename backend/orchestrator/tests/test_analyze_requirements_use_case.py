@@ -59,7 +59,7 @@ async def test_execute_forwards_previous_artifact() -> None:
 
 
 async def test_execute_rejects_blank_input_without_calling_the_port() -> None:
-    """A pure orchestration guard — no I/O, no port call, for input that
+    """A pure orchestration guard - no I/O, no port call, for input that
     can never produce a meaningful analysis."""
 
     port = _FakePort(_artifact())

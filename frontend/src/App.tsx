@@ -10,15 +10,15 @@ import { Workspace } from "./components/Workspace"
 import { ROLE_ADMIN, ROLE_ARCHITECT, ROLE_REVIEWER, ROLE_USER } from "./permissions"
 import { useCurrentUser } from "./useCurrentUser"
 
-/** What each Entra ID App Role actually permits — mirrors the permission
+/** What each Entra ID App Role actually permits - mirrors the permission
  * matrix in the README's "RBAC (Role-Based Access Control)" section
  * (kept in sync by hand, same as `permissions.ts`'s header comment).
  * Each entry is written to stand on its own: the tooltip only ever shows
  * the roles one caller actually holds, so `Admin`'s line spells out what
- * it grants rather than saying "all of the above" — a caller who only
+ * it grants rather than saying "all of the above" - a caller who only
  * holds `Admin` would see just that one line, with nothing else to point
  * back to. This is display text only, shown in `RoleBadge`'s tooltip; it
- * has no bearing on what's actually allowed — that's still `hasAnyRole`
+ * has no bearing on what's actually allowed - that's still `hasAnyRole`
  * on the frontend and `require_role` on the backend, same as everywhere
  * else in this app. */
 const ROLE_PERMISSIONS: Record<string, string> = {
@@ -27,7 +27,7 @@ const ROLE_PERMISSIONS: Record<string, string> = {
   [ROLE_REVIEWER]: "Approve or reject an architecture on your own sessions",
   [ROLE_ADMIN]:
     "Create/refine requirements, generate/refine architectures, and approve/reject " +
-    "architectures — on every session in the system, not just your own",
+    "architectures - on every session in the system, not just your own",
 }
 
 /** Builds the multi-line tooltip text for `RoleBadge`: one line per role
@@ -37,7 +37,7 @@ const ROLE_PERMISSIONS: Record<string, string> = {
  * never silently drops a role the badge itself is showing. */
 function roleTooltip(roles: string[]): string {
   const lines = roles.map(
-    (role) => `${role} — ${ROLE_PERMISSIONS[role] ?? "No documented permissions for this role."}`,
+    (role) => `${role} - ${ROLE_PERMISSIONS[role] ?? "No documented permissions for this role."}`,
   )
   return [...lines, "", "Every role can also view and rename its accessible sessions."].join("\n")
 }
@@ -46,13 +46,13 @@ type View = { name: "new" } | { name: "session"; sessionId: string }
 
 /** Turns a `loginRedirect`/`logoutRedirect` rejection into text a
  * non-technical user can act on. These previously had no `.catch` at all
- * — any failure was an unhandled promise rejection: nothing changed on
+ * - any failure was an unhandled promise rejection: nothing changed on
  * screen, and the only way to find out anything had gone wrong was to
  * open the browser console.
  *
  * Sign-in uses a full-page redirect rather than a popup: this app hit a
  * string of popup-specific failures in practice (`interaction_in_progress`,
- * `timed_out`, `block_nested_popups`, and — worse — the popup silently
+ * `timed_out`, `block_nested_popups`, and - worse - the popup silently
  * loading this app's own UI instead of completing the auth handshake at
  * all, MSAL's popup-completion detection never firing even though the
  * popup reached the correct redirect URI with a valid response). That
@@ -64,7 +64,7 @@ function describeSignInError(err: unknown): string {
   if (err instanceof BrowserAuthError && err.errorCode === "interaction_in_progress") {
     return (
       "A previous sign-in attempt is still marked as in progress in this " +
-      "browser tab. Reload the page and try again — if it keeps happening, " +
+      "browser tab. Reload the page and try again - if it keeps happening, " +
       "clear this site's session storage."
     )
   }
@@ -73,11 +73,11 @@ function describeSignInError(err: unknown): string {
 
 /** The signed-in caller's Entra ID App Roles (`GET /me`, see
  * `useCurrentUser.ts`), shown next to "Signed in as ..." so it's visible
- * without having to guess from which buttons happen to be greyed out — the
+ * without having to guess from which buttons happen to be greyed out - the
  * same roles `permissions.ts`'s `hasAnyRole` checks against everywhere
  * else in this app. Renders nothing until `/me` has actually resolved
  * (`loaded`), and nothing at all if the caller holds no role (an
- * authenticated-but-unassigned caller — every request will 403; that's
+ * authenticated-but-unassigned caller - every request will 403; that's
  * surfaced by the actions themselves, not duplicated here). */
 function RoleBadge() {
   const { roles, loaded } = useCurrentUser()
@@ -93,15 +93,16 @@ function AuthBar() {
   if (!authIsConfigured) {
     return (
       <span className="muted">
-        Sign-in not configured — running anonymously. <RoleBadge />
+        Sign-in not configured - running anonymously. <RoleBadge />
       </span>
     )
   }
 
   if (isAuthenticated) {
     return (
-      <span>
-        Signed in as {accounts[0]?.username ?? accounts[0]?.name ?? "unknown"} <RoleBadge />{" "}
+      <span className="auth-bar">
+        <span>Signed in as {accounts[0]?.username ?? accounts[0]?.name ?? "unknown"}</span>
+        <RoleBadge />
         <button
           type="button"
           onClick={() => {
@@ -139,7 +140,7 @@ function Gate({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null)
 
   // Three ways in: signed in via Entra, sign-in not configured yet (so
-  // anonymous is the only option — matches the backend's AUTH_ENABLED=false
+  // anonymous is the only option - matches the backend's AUTH_ENABLED=false
   // default), or the user explicitly chose to skip signing in against a
   // backend that also has auth disabled.
   if (isAuthenticated || anonymous || !authIsConfigured) {
@@ -167,7 +168,7 @@ function Gate({ children }: { children: React.ReactNode }) {
       {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
       <p className="muted">
         "Continue without signing in" only works against a backend running with{" "}
-        <code>AUTH_ENABLED=false</code> — otherwise every request gets a 401.
+        <code>AUTH_ENABLED=false</code> - otherwise every request gets a 401.
       </p>
     </div>
   )

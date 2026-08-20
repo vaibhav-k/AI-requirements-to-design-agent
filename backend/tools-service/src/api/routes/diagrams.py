@@ -1,10 +1,10 @@
-"""``POST /tools/diagrams/generate`` — render a design to an SVG diagram.
+"""``POST /tools/diagrams/generate`` - render a design to an SVG diagram.
 
 The deterministic half of what ``app/design/session.py``'s
 ``DiagramRendererPort`` used to call in-process on the orchestrator (see
 ``ArchitectureDiagramGenerator`` in ``src/infrastructure/diagram.py``,
 moved here verbatim). Reached over MCP via ``backend/mcp-wrapper``, never
-called directly by the orchestrator — see the root README's architecture
+called directly by the orchestrator - see the root README's architecture
 section.
 """
 

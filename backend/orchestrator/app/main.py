@@ -202,7 +202,7 @@ def _print_design_open_questions(design: SystemDesignArtifact) -> None:
 def display_design(design: SystemDesignArtifact) -> None:
     """Display a generated architecture.
 
-    Delegates each section to its own ``_print_design_*`` helper —
+    Delegates each section to its own ``_print_design_*`` helper -
     previously all inlined here, which pushed this one function past a
     reasonable cyclomatic-complexity threshold (15 branches). Each helper
     is a single, independently readable "if there's data, list it,
@@ -234,7 +234,7 @@ def _accept_and_generate_architecture(
     when it should loop back to the menu (a recoverable generation error
     was already reported to the user).
 
-    Extracted out of ``run`` — inlined, this ``try``/``except`` cascade
+    Extracted out of ``run`` - inlined, this ``try``/``except`` cascade
     plus the display/print calls pushed ``run`` well past a reasonable
     statement-count threshold (59/50).
     """
@@ -299,7 +299,7 @@ def run() -> None:
     )
 
     print("=" * 80)
-    print("AI REQUIREMENTS → SYSTEM DESIGN AGENT — MVP-2")
+    print("AI REQUIREMENTS → SYSTEM DESIGN AGENT")
     print("=" * 80)
 
     print("\nDescribe what you want to build.")

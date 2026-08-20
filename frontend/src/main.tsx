@@ -20,7 +20,7 @@ function renderApp() {
 }
 
 // msal-browser v3+ requires an explicit initialize() before any other
-// call (including getAllAccounts()) — render only starts once that
+// call (including getAllAccounts()) - render only starts once that
 // resolves. handleRedirectPromise() then completes the sign-in that
 // App.tsx's loginRedirect() started: on the page load right after Entra
 // ID redirects back here, it exchanges the code in the URL for tokens and
@@ -28,7 +28,7 @@ function renderApp() {
 // almost immediately, so it's safe (and necessary) to always call.
 //
 // Sign-in uses a redirect rather than a popup specifically because the
-// popup flow proved unreliable in practice here — see App.tsx's
+// popup flow proved unreliable in practice here - see App.tsx's
 // `describeSignInError` for the failure history.
 void msalInstance
   .initialize()
@@ -43,7 +43,7 @@ void msalInstance
       }
     }
 
-    // Keep "the" active account in sync with whichever one just signed in —
+    // Keep "the" active account in sync with whichever one just signed in -
     // useMsal()'s `accounts` (and therefore useRequirementsApi's token
     // acquisition) reads whatever MSAL considers active.
     msalInstance.addEventCallback((event) => {
@@ -60,7 +60,7 @@ void msalInstance
   .catch((error: unknown) => {
     // A failed handleRedirectPromise() (e.g. the redirect carried an error
     // response instead of a code) must not leave the user on a blank page
-    // forever — render the app anyway so the Gate's Sign in button is
+    // forever - render the app anyway so the Gate's Sign in button is
     // still reachable to retry.
     // eslint-disable-next-line no-console
     console.error("MSAL redirect handling failed", error)

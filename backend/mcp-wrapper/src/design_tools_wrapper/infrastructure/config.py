@@ -2,7 +2,7 @@
 
 Mirrors Parnell-AI-Persona-Agent's per-capability wrapper config shape
 (e.g. ``backend/mcp-wrapper/src/architecture_design_wrapper/infrastructure
-/config.py``) — a small cached settings model naming this wrapper's own
+/config.py``) - a small cached settings model naming this wrapper's own
 bind address/path plus where to reach tools-service.
 """
 

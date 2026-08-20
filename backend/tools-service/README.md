@@ -1,63 +1,88 @@
 # design-tools-service
 
 The deterministic, LLM-free half of the AI Requirements → System Design
-Agent's architecture-design capability: rendering a structured design as
-an SVG diagram, and validating a structured design's semantic integrity.
+Agent's pipeline: rendering a structured design as an SVG diagram,
+validating a structured design's semantic integrity, and validating +
+rendering a work breakdown's traceability into an import-ready CSV.
 
-This service is one of three that make up the whole system — see the
+This service is one of three that make up the whole system - see the
 root `README.md` (two directories up) for the full picture, and
 `backend/orchestrator/README.md`'s "Service Architecture" section for
 exactly how a request reaches here.
 
 ## Why this is a separate service
 
-Before the split, this logic
+Before the split, the diagram/validation logic
 (`app.design.diagram.ArchitectureDiagramGenerator` and
 `app.design.validator.ArchitectureValidator`) ran in-process inside the
 orchestrator, alongside every Microsoft Agent Framework/Azure OpenAI
 call. The orchestrator/tools-service split's whole point is keeping every
-LLM call — and only LLM calls — in the orchestrator; this service has no
+LLM call - and only LLM calls - in the orchestrator; this service has no
 LLM dependency at all, no Azure OpenAI key, nothing non-deterministic.
-Nothing here talks to MCP either — `backend/mcp-wrapper` is the only
-thing that calls this service, over plain REST.
+The work-breakdown export/validation logic
+(`src/infrastructure/work_breakdown_export.py`) never had an in-process
+home to begin with - it was built directly here, since CSV rendering and
+ID-traceability checking are just as deterministic as diagram rendering
+and design validation. Nothing here talks to MCP either -
+`backend/mcp-wrapper` is the only thing that calls this service, over
+plain REST.
 
 ## Endpoints
 
-* `POST /tools/diagrams/generate` — body: a `SystemDesignArtifact` (JSON).
+* `POST /tools/diagrams/generate` - body: a `SystemDesignArtifact` (JSON).
   Returns `{"svg": "<svg>...</svg>"}` on success, or HTTP 422 with
   `{"detail": "..."}` if rendering fails.
-* `POST /tools/designs/validate` — body: a `SystemDesignArtifact` (JSON).
+* `POST /tools/designs/validate` - body: a `SystemDesignArtifact` (JSON).
   Returns `{"valid": true, "design": {...}}` on success, or HTTP 422 with
   `{"detail": "..."}` if validation fails.
-* `GET /health` — liveness check, no auth, no dependencies.
+* `POST /tools/work-breakdown/export` - body: a `WorkBreakdownArtifact`
+  plus the `RequirementsArtifact`/`SystemDesignArtifact` it was generated
+  from (JSON - see `src/domain/work_breakdown.py`'s
+  `WorkBreakdownExportRequest`). Returns a `WorkBreakdownExport` - the
+  rendered CSV text plus feature/story/task counts, covered/unmapped/
+  fabricated requirement and architecture IDs, and any ambiguities the
+  agent flagged - on success, or HTTP 422 with `{"detail": "..."}` if a
+  task has no traceability to any requirement or architecture ID at all
+  (the one defect this endpoint treats as fatal rather than a warning).
+* `GET /health` - liveness check, no auth, no dependencies.
 
 ## Project structure
 
 ```text
 tools-service/
-├── main.py                     # FastAPI app factory; mounts both routers + /health
+├── main.py                     # FastAPI app factory; mounts all three routers + /health
 ├── src/
 │   ├── domain/
-│   │   ├── design.py            # DesignComponent/.../SystemDesignArtifact —
+│   │   ├── design.py            # DesignComponent/.../SystemDesignArtifact -
 │   │   │                        # a deliberate, independent copy of the
 │   │   │                        # orchestrator's app.domain.design models,
 │   │   │                        # matching Parnell-AI-Persona-Agent's own
 │   │   │                        # per-service duplicated domain models
 │   │   │                        # rather than a shared package
-│   │   └── errors.py            # DiagramGenerationError, ArchitectureValidationError
+│   │   ├── requirements.py      # Requirement/.../RequirementsArtifact - same
+│   │   │                        # deliberate duplication, of app.domain.requirements
+│   │   ├── work_breakdown.py    # WorkBreakdownTask/.../WorkBreakdownExport -
+│   │   │                        # same duplication, of app.domain.work_breakdown
+│   │   └── errors.py            # DiagramGenerationError, ArchitectureValidationError,
+│   │                            # WorkBreakdownExportError
 │   │
 │   ├── infrastructure/
 │   │   ├── diagram.py           # ArchitectureDiagramGenerator (moved from
 │   │   │                        # app/design/diagram.py, imports rewritten)
 │   │   ├── validator.py         # ArchitectureValidator (moved from
 │   │   │                        # app/design/validator.py, imports rewritten)
+│   │   ├── work_breakdown_export.py  # WorkBreakdownExporter - CSV rendering +
+│   │   │                        # requirement/architecture ID traceability
+│   │   │                        # validation; built here directly (see "Why
+│   │   │                        # this is a separate service" above)
 │   │   ├── icons.py             # icon path resolution (moved as-is)
 │   │   ├── icons/azure/*.png    # vendored Azure Architecture Icons (23 files)
 │   │   └── config.py            # Settings (env prefix TOOLS_SERVICE_)
 │   │
 │   └── api/routes/
 │       ├── diagrams.py          # POST /tools/diagrams/generate
-│       └── validation.py        # POST /tools/designs/validate
+│       ├── validation.py        # POST /tools/designs/validate
+│       └── work_breakdown.py    # POST /tools/work-breakdown/export
 │
 ├── tests/
 └── requirements.txt
@@ -85,7 +110,7 @@ brew install graphviz
 ```
 
 Copy `.env.example` to `.env` if you need non-default host/port/log
-level — none of the settings are required to run locally.
+level - none of the settings are required to run locally.
 
 ## Run
 

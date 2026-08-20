@@ -2,7 +2,7 @@
 
 Mirrors Parnell-AI-Persona-Agent's ``backend/tools-service/src/infrastructure
 /config.py`` shape: a small cached ``pydantic-settings`` model, no
-``AZURE_OPENAI_*``/Cosmos/Blob settings at all — this service never calls
+``AZURE_OPENAI_*``/Cosmos/Blob settings at all - this service never calls
 an LLM and never holds state, so it has nothing to read beyond its own
 bind address.
 """

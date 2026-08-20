@@ -2,7 +2,7 @@
 
 Moved here, verbatim, from the former ``app/design/models.py`` as part
 of the Clean Architecture migration (see README -> "Clean Architecture
-Migration") — the same "pure entity, zero I/O" home
+Migration") - the same "pure entity, zero I/O" home
 ``app.domain.requirements`` already gives the requirements bounded
 context's entities. Nothing here depends on Pydantic beyond what every
 other domain module already accepts as a shared-kernel dependency (see
@@ -10,7 +10,7 @@ other domain module already accepts as a shared-kernel dependency (see
 
 ``app/design/models.py`` used to be a deprecated re-export shim over
 this module, the same "strangler fig" shape ``app/models.py`` used for
-``app.domain.requirements`` — it has since been deleted (see README ->
+``app.domain.requirements`` - it has since been deleted (see README ->
 "Clean Architecture Migration" -> the slice that migrated every
 remaining importer off both shims). Every module that used to import
 ``SystemDesignArtifact`` and friends from ``app.design.models``
@@ -106,7 +106,7 @@ class ApprovalDecision(BaseModel):
     """One approve/reject decision recorded against an architecture version.
 
     Persisted on ``SessionRecord.approval_history`` (see
-    ``app/infrastructure/session_store.py``) — an append-only log, never
+    ``app/infrastructure/session_store.py``) - an append-only log, never
     rewritten or removed, so a session's full approval history survives
     every later refinement rather than only reflecting the latest decision.
     """

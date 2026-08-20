@@ -22,7 +22,7 @@ GENERIC_DEPENDENCY_ICON = "generic-external.png"
 
 # Ordered most-specific-first: the first keyword found wins, so a
 # specific multi-word Azure product/concept name must come before any
-# single generic word it could otherwise be shadowed by — e.g. "key
+# single generic word it could otherwise be shadowed by - e.g. "key
 # vault" must be checked before "storage", or an external dependency
 # named "Key Vault" with purpose "Secret storage" would match the
 # generic "storage" keyword first and get the wrong icon. The single
@@ -67,7 +67,7 @@ _KEYWORD_ICON_MAP: tuple[tuple[str, str], ...] = (
     ("user interface", "client.png"),
     ("telemetry", "monitor.png"),
     ("logging", "monitor.png"),
-    # Generic single-word fallbacks — checked last; see the note above.
+    # Generic single-word fallbacks - checked last; see the note above.
     ("function", "function.png"),
     ("container", "container.png"),
     ("sql", "sql-database.png"),
@@ -91,7 +91,7 @@ def _best_matching_icon(name: str, detail: str, fallback: str) -> str:
     LLM) chose specifically to identify it; the detail text is free-form
     prose that can easily mention an unrelated but keyword-matching term
     in passing (e.g. a "CI/CD Pipeline" component whose responsibility
-    happens to say it "deploys container images" — checking name first
+    happens to say it "deploys container images" - checking name first
     means "pipeline" from the name wins over "container" from the
     responsibility, without depending on those two keywords' relative
     order in `_KEYWORD_ICON_MAP`).

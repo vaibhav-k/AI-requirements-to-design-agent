@@ -3,13 +3,13 @@
 Same wiring notes as ``requirements_agent.py``/``system_design_agent.py``
 apply (``agent_framework.openai.OpenAIChatClient`` with ``base_url``
 routing; structured output via ``ChatOptions(response_format=...)``; the
-parsed instance comes back on ``AgentResponse.value``) — not repeated
+parsed instance comes back on ``AgentResponse.value``) - not repeated
 here. The one addition this adapter needs beyond those two: the uploaded
 image itself has to reach the model as multimodal input, not just text.
 Microsoft Agent Framework represents that as an
 ``agent_framework.Message`` whose ``contents`` list mixes a
 ``Content.from_text(...)`` prompt part with a ``Content.from_data(...)``
-image part (built by ``vision_support.image_content``) — the
+image part (built by ``vision_support.image_content``) - the
 Agent-Framework-native equivalent of the previous direct
 ``openai.OpenAI().responses.parse(...)`` call's ``input_text``/
 ``input_image`` content parts (``app/vision.py``'s git history before
@@ -30,13 +30,13 @@ _INSTRUCTIONS = "You classify an uploaded image for a requirements-to-design too
 _CLASSIFICATION_PROMPT = """
 Classify this image. Decide whether it is:
 
-(a) 'document' — a screenshot or photo of TEXT meant to be read:
+(a) 'document' - a screenshot or photo of TEXT meant to be read:
 requirements notes, an email, a spec, a whiteboard of bullet points, a
 form, a table, a written note. Even if it contains a few small boxes or
 icons, classify it as 'document' if its primary content is prose or
 lists of text.
 
-(b) 'diagram' — a SYSTEM DESIGN or WORKFLOW DIAGRAM: boxes/nodes
+(b) 'diagram' - a SYSTEM DESIGN or WORKFLOW DIAGRAM: boxes/nodes
 connected by arrows depicting components, services, data flow, a
 sequence, or an architecture, meant to be understood as a structural
 drawing rather than read as prose.

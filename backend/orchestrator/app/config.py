@@ -3,9 +3,9 @@
 Everything else in this project (the CLI, the MCP server, ``ArtifactStore``)
 reads configuration straight from environment variables via ``os.getenv`` at
 import time. The web layer introduced alongside Entra ID authentication needs
-a bit more than that — a cached ``Settings`` singleton that FastAPI
+a bit more than that - a cached ``Settings`` singleton that FastAPI
 dependencies (``require_user`` in particular) can pull from on every request
-without re-reading the environment — so it gets its own small
+without re-reading the environment - so it gets its own small
 ``pydantic-settings`` model instead of bolting onto the existing pattern.
 """
 
@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # ---- HTTP host ----
     # Binding all interfaces is intentional, not an oversight: this server
     # runs inside a container (see the project's Dockerfile/docs) and must
-    # accept connections routed in from outside it — binding to 127.0.0.1
+    # accept connections routed in from outside it - binding to 127.0.0.1
     # would make it unreachable from the host or from other containers.
     # Actual exposure is controlled by the container/orchestrator's port
     # mapping and network policy, not by this default.
@@ -47,8 +47,8 @@ class Settings(BaseSettings):
     entra_api_scope: str = "access_as_user"
 
     # ---- Cosmos DB (web API session state) ----
-    # Backs app/infrastructure/session_store.py. The CLI has no equivalent —
-    # its session state lives only in the running process — so these are only
+    # Backs app/infrastructure/session_store.py. The CLI has no equivalent -
+    # its session state lives only in the running process - so these are only
     # required to run the web API's requirements/architecture endpoints.
     cosmos_endpoint: str = ""
     cosmos_key: str = ""

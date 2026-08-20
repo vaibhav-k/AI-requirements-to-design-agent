@@ -2,26 +2,26 @@
 
 File upload is an *additional* way to supply requirements input, alongside
 the existing free-text ``user_input`` (see ``app/analyzer.py``'s
-``RequirementsAnalyzer.analyze``) — not a replacement for it. Whatever text
+``RequirementsAnalyzer.analyze``) - not a replacement for it. Whatever text
 comes out of a file here is passed into that same ``analyze()`` call as
 ``user_input``, so the rest of the requirements pipeline (structuring,
 refinement, versioning, persistence) doesn't need to know or care whether
 its input was typed or extracted from a document.
 
-Extraction is deliberately routed through a single service — Azure AI
-Document Intelligence's ``prebuilt-read`` model — for every non-plain-text
+Extraction is deliberately routed through a single service - Azure AI
+Document Intelligence's ``prebuilt-read`` model - for every non-plain-text
 format (PDF, DOCX, PNG, JPEG/JPG), rather than one extraction library per
 format (``pypdf`` for PDF, ``python-docx`` for Word, ``pytesseract`` for
 images, ...). ``prebuilt-read`` performs OCR and layout-aware text
 extraction and, as of the API version this project targets, accepts all of
-those formats directly — so a photo of a whiteboard and a born-digital PDF
+those formats directly - so a photo of a whiteboard and a born-digital PDF
 go through the exact same code path. ``.txt`` is decoded directly instead,
 since plain text needs no document analysis at all.
 
 If your Document Intelligence resource is pinned to an older API version
 that doesn't yet accept ``.docx`` as an input format, DOCX extraction will
 fail with a clear ``DocumentExtractionError`` rather than silently
-misbehaving — see the README's "File Upload" section for the workaround
+misbehaving - see the README's "File Upload" section for the workaround
 (convert to PDF first) if you hit this.
 """
 
@@ -41,7 +41,7 @@ class DocumentExtractionError(RuntimeError):
     """Raised when text can't be extracted from an uploaded file."""
 
 
-# .txt needs no document analysis — it's already the text we want.
+# .txt needs no document analysis - it's already the text we want.
 _PLAIN_TEXT_EXTENSIONS = frozenset({".txt"})
 
 # Everything else goes through Document Intelligence's prebuilt-read model,
@@ -53,7 +53,7 @@ _DOCUMENT_INTELLIGENCE_EXTENSIONS = frozenset(
 )
 
 # The subset of the above that could plausibly be a photo/screenshot of a
-# system design or workflow diagram rather than prose — PDF/DOCX are
+# system design or workflow diagram rather than prose - PDF/DOCX are
 # authored documents and never routed through image classification (see
 # ``app/vision.py``'s ``ImageInputClassifier``), only PNG/JPG/JPEG are.
 IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg"})
@@ -74,7 +74,7 @@ def is_supported_filename(filename: str) -> bool:
 
 def is_image_filename(filename: str) -> bool:
     """Whether ``filename`` is one of the image extensions eligible for
-    image-input classification (``app/vision.py``) before extraction —
+    image-input classification (``app/vision.py``) before extraction -
     a PNG/JPG/JPEG might be a document screenshot (routed through the
     existing OCR pipeline below) or a system design/workflow diagram
     (routed straight into architecture generation instead)."""
@@ -87,7 +87,7 @@ class RequirementsDocumentExtractor:
 
     def __init__(self) -> None:
         # Built lazily, on first use of a Document-Intelligence-requiring
-        # extraction — *not* eagerly at import/construction time the way
+        # extraction - *not* eagerly at import/construction time the way
         # AZURE_OPENAI_* is required in app/analyzer.py. Uploading a file
         # is optional; a deployment that only ever uses typed text input
         # must keep working without AZURE_DOCUMENT_INTELLIGENCE_* configured
@@ -117,7 +117,7 @@ class RequirementsDocumentExtractor:
     def extract(self, filename: str, content: bytes) -> str:
         """Extract plain text from an uploaded file's raw bytes.
 
-        Dispatches purely on ``filename``'s extension — the caller (the
+        Dispatches purely on ``filename``'s extension - the caller (the
         upload routes in ``app/api/routes/requirements.py``) is
         responsible for rejecting unsupported extensions before the
         (potentially large) file is even read into memory; this also
@@ -170,7 +170,7 @@ class RequirementsDocumentExtractor:
 
         if not extracted_text.strip():
             raise DocumentExtractionError(
-                "No text could be extracted from this file — it may be "
+                "No text could be extracted from this file - it may be "
                 "blank, corrupted, or an unsupported variant of its format."
             )
 

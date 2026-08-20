@@ -64,7 +64,7 @@ class ArchitectureSession:
         # call produces v1). Callers refining an already-accepted
         # architecture pass in the session's current `design_version` here,
         # so a refinement continues the same version sequence instead of
-        # restarting it at v1 — see `refine_architecture` in
+        # restarting it at v1 - see `refine_architecture` in
         # app/api/routes/requirements.py.
         self.version = version
 
@@ -78,13 +78,13 @@ class ArchitectureSession:
         requirements text.
 
         Passing ``previous_design``/``refinement_input`` refines that design
-        in place instead of generating a fresh one — see
+        in place instead of generating a fresh one - see
         ``GenerateSystemDesignUseCase.execute``. The validate/render/persist
         tail of this is shared with :meth:`generate_from_design` (see there
         for the image-diagram entry point that skips straight past this
         text-based analysis step).
 
-        Synchronous on purpose — the CLI (``app/main.py``) and the sync
+        Synchronous on purpose - the CLI (``app/main.py``) and the sync
         FastAPI routes that construct this session call it directly with
         no event loop of their own; ``run_sync`` (see
         ``app/infrastructure/sync_bridge.py``) bridges into
@@ -112,10 +112,10 @@ class ArchitectureSession:
         """Validate, render, and persist an already-produced design.
 
         This is :meth:`generate`'s tail end, factored out so a design that
-        didn't come from :attr:`analyzer` — today, one interpreted directly
+        didn't come from :attr:`analyzer` - today, one interpreted directly
         from an uploaded diagram image by
         ``app/vision.py``'s ``DiagramImageInterpreter`` (see the upload
-        routes in ``app/api/routes/requirements.py``) — goes through the
+        routes in ``app/api/routes/requirements.py``) - goes through the
         exact same validation, diagram rendering, and Blob persistence as a
         text-derived one, rather than a parallel, easily-divergent copy of
         that logic.

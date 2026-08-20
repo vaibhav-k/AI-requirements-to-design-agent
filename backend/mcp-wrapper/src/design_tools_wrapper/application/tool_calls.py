@@ -1,7 +1,7 @@
 """Translate MCP tool calls into plain REST calls against tools-service.
 
 This module is intentionally "dumb": no domain typing, no business logic
-— it deserializes the JSON string an MCP tool received, POSTs it to
+- it deserializes the JSON string an MCP tool received, POSTs it to
 tools-service, and serializes the response back to a JSON string. All the
 actual behavior (rendering, validation) lives in tools-service; this is
 just the wire adapter, the same "pure protocol adapter, no business
@@ -11,20 +11,20 @@ logic" role Parnell-AI-Persona-Agent's per-capability wrappers play (see
 
 Working with raw JSON strings rather than declaring Pydantic request/
 response models here (unlike Parnell's wrappers) matches this project's
-own existing MCP surface's convention — ``app/mcp/server.py``'s tools all
+own existing MCP surface's convention - ``app/mcp/server.py``'s tools all
 take/return ``*_json: str`` for the same artifact types already, so this
 internal wrapper does the same rather than introducing a second style.
 
-A tools-service rejection (422 — an invalid diagram spec, a failed
+A tools-service rejection (422 - an invalid diagram spec, a failed
 validation) is an ordinary, expected outcome here, not a transport
 failure: both tool functions always return normally, wrapping the result
-in an envelope — ``{"ok": bool, "status_code": int, "body": {...}}`` —
+in an envelope - ``{"ok": bool, "status_code": int, "body": {...}}`` -
 rather than raising and relying on the MCP protocol's own
 ``CallToolResult.isError``/exception-text plumbing to carry structured
 error detail back to the caller. The orchestrator's MCP client
 (``app/infrastructure/tools_client.py``) reads ``ok``/``body`` directly
 and raises the right typed error itself (``ArchitectureValidationError``
-vs. ``DiagramGenerationError``) — simpler than parsing an error string
+vs. ``DiagramGenerationError``) - simpler than parsing an error string
 back out of MCP's own error-content format.
 """
 
@@ -41,17 +41,16 @@ from src.design_tools_wrapper.infrastructure.config import get_settings
 logger = logging.getLogger(__name__)
 
 
-async def _post(path: str, design_json: str) -> dict[str, Any]:
-    """POST ``design_json`` to tools-service and return the envelope
-    described in this module's docstring. Never raises for a tools-service
-    4xx/5xx — only for something lower-level (DNS, connection refused,
-    timeout), which callers let propagate as an ordinary exception since
-    there's no sensible envelope to build without a response at all.
+async def _post_payload(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """POST ``payload`` to tools-service and return the envelope described
+    in this module's docstring. Never raises for a tools-service 4xx/5xx -
+    only for something lower-level (DNS, connection refused, timeout),
+    which callers let propagate as an ordinary exception since there's no
+    sensible envelope to build without a response at all.
     """
 
     settings = get_settings()
     url = f"{settings.tools_service_base_url.rstrip('/')}{path}"
-    payload = json.loads(design_json)
 
     async with httpx.AsyncClient(timeout=settings.tools_service_timeout) as client:
         response = await client.post(url, json=payload)
@@ -66,6 +65,13 @@ async def _post(path: str, design_json: str) -> dict[str, Any]:
         "status_code": response.status_code,
         "body": body,
     }
+
+
+async def _post(path: str, design_json: str) -> dict[str, Any]:
+    """``_post_payload`` for the common case: the whole request body is
+    one already-JSON-encoded artifact string."""
+
+    return await _post_payload(path, json.loads(design_json))
 
 
 async def generate_architecture_diagram(design_json: str) -> str:
@@ -87,4 +93,34 @@ async def validate_system_design(design_json: str) -> str:
     """
 
     envelope = await _post("/tools/designs/validate", design_json)
+    return json.dumps(envelope)
+
+
+async def export_work_breakdown(
+    breakdown_json: str,
+    requirements_json: str,
+    design_json: str,
+) -> str:
+    """Call tools-service's work-breakdown export endpoint.
+
+    Unlike ``generate_architecture_diagram``/``validate_system_design``,
+    this tool's request body is three separate artifacts rather than one -
+    still assembled here without any domain typing or business logic, the
+    same "dumb wire adapter" role this module's docstring describes; the
+    only thing this function does that ``_post`` doesn't is combine three
+    already-JSON-encoded strings into the one payload dict tools-service's
+    ``WorkBreakdownExportRequest`` expects.
+
+    Returns a JSON envelope; ``body`` is the ``WorkBreakdownExport`` (CSV
+    text plus validation summary) when ``ok`` is true, or
+    ``{"detail": "..."}`` when it's false.
+    """
+
+    payload = {
+        "breakdown": json.loads(breakdown_json),
+        "requirements": json.loads(requirements_json),
+        "design": json.loads(design_json),
+    }
+
+    envelope = await _post_payload("/tools/work-breakdown/export", payload)
     return json.dumps(envelope)

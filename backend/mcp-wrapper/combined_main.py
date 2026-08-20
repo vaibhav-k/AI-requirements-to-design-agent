@@ -3,7 +3,7 @@
 Mirrors Parnell-AI-Persona-Agent's ``backend/mcp-wrapper/combined_main.py``:
 a single Starlette app mounting every wrapper's ``streamable_http_app()``
 routes, so one process/port serves all wrapper MCP endpoints (today, just
-``design-tools`` — see the root README for why this project's tools
+``design-tools`` - see the root README for why this project's tools
 surface is small enough not to need Parnell's five-wrappers split).
 
 Run with:
@@ -76,8 +76,8 @@ def main() -> None:
     if sys.platform == "win32":
         # McpToolsClient (backend/orchestrator/app/infrastructure
         # /tools_client.py) opens a fresh MCP session per call rather than
-        # holding one open — matching this wrapper's own
-        # stateless_http=True design — so short-lived connections open and
+        # holding one open - matching this wrapper's own
+        # stateless_http=True design - so short-lived connections open and
         # close constantly here. Windows' default ProactorEventLoop logs a
         # spurious "ConnectionResetError [WinError 10054]" from
         # _ProactorBasePipeTransport._call_connection_lost on every one of

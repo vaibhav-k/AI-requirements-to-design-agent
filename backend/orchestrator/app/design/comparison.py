@@ -1,7 +1,7 @@
 """Backend-computed structured comparison between two architecture versions.
 
 The frontend already does this client-side (`frontend/src/lib/diff.ts`'s
-`diffByKey`, consumed by `ArchitectureView.tsx`) — pick two persisted
+`diffByKey`, consumed by `ArchitectureView.tsx`) - pick two persisted
 versions and diff them in the browser. This module is the server-side
 equivalent: the same id-keyed added/removed/changed/unchanged shape,
 computed once here so any client (this frontend, another UI, an MCP
@@ -10,7 +10,7 @@ itself, exposed via `GET /requirements-runs/{id}/architecture/compare`
 (`app/api/routes/artifacts.py`).
 
 Equality is structural (`model_dump()` equality on two Pydantic models of
-the same type), the same approach `diffByKey` uses (JSON-stringify) — this
+the same type), the same approach `diffByKey` uses (JSON-stringify) - this
 is sufficient because both versions being compared are the same
 `SystemDesignArtifact` schema; there's no cross-version schema migration to
 account for.
@@ -51,7 +51,7 @@ class ListDiff(BaseModel, Generic[T]):
 
 
 def _diff_by_id(before: list[T], after: list[T]) -> ListDiff[T]:
-    """Generic id-keyed list diff — mirrors `diffByKey` in
+    """Generic id-keyed list diff - mirrors `diffByKey` in
     `frontend/src/lib/diff.ts`. Every model diffed here (`DesignComponent`,
     `DesignInterface`, `ExternalDependency`, `DesignAssumption`,
     `DesignQuestion`) has an `id: str` field, so this can stay generic

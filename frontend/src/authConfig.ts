@@ -1,6 +1,6 @@
 import type { Configuration } from "@azure/msal-browser"
 
-// Read once at module load. All three must be set for sign-in to work —
+// Read once at module load. All three must be set for sign-in to work -
 // see the "Frontend: Entra ID App Registration" section of the README for
 // how to get them (a *second*, SPA-platform app registration, separate
 // from the API's own client id: an SPA can't hold a client secret the way
@@ -14,11 +14,11 @@ export const authIsConfigured = Boolean(tenantId && clientId && apiScope)
 if (!authIsConfigured) {
   // Not a hard failure: the app still renders and can be used against a
   // backend running with AUTH_ENABLED=false (anonymous/local dev) without
-  // signing in at all — see App.tsx's "Continue without signing in" path.
+  // signing in at all - see App.tsx's "Continue without signing in" path.
   // eslint-disable-next-line no-console
   console.warn(
     "frontend/.env is missing VITE_ENTRA_TENANT_ID / VITE_ENTRA_CLIENT_ID / " +
-      "VITE_API_SCOPE — sign-in is disabled until it's configured. See the " +
+      "VITE_API_SCOPE - sign-in is disabled until it's configured. See the " +
       "README's Entra ID App Registration section.",
   )
 }
@@ -41,7 +41,7 @@ export const loginRequest = {
   scopes: apiScope ? [apiScope] : [],
   // Without this, `loginRedirect` completes silently against whatever
   // account already has an active Entra ID SSO session in this browser (a
-  // cookie, or — on an Entra-joined Windows device — a Primary Refresh
+  // cookie, or - on an Entra-joined Windows device - a Primary Refresh
   // Token) instead of asking, so "Sign in" only ever signs you back in as
   // yourself even when you meant to switch accounts. `select_account`
   // makes Entra ID always show the account chooser (with a "Use another

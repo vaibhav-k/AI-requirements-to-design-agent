@@ -13,7 +13,7 @@ Authentication is opt-in (see ``app/config.py``). With ``AUTH_ENABLED=false``
 project's existing "local dev just works" philosophy. Set ``AUTH_ENABLED=true``
 plus ``ENTRA_TENANT_ID`` / ``ENTRA_CLIENT_ID`` to require a valid Entra ID
 bearer token on every request handled by a router registered with
-``dependencies=[Depends(require_user)]`` — see ``create_app`` below.
+``dependencies=[Depends(require_user)]`` - see ``create_app`` below.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.artifacts import router as artifacts_router
 from app.api.routes.requirements import router as requirements_router
+from app.api.routes.work_breakdown import router as work_breakdown_router
 from app.config import get_settings
 from app.infrastructure.artifact_store import (
     AZURE_CONNECTION_STRING,
@@ -51,13 +52,13 @@ async def lifespan(fastapi_app: FastAPI) -> AsyncIterator[None]:
     """Construct the Cosmos session store and Blob artifact store once, at startup.
 
     Both are synchronous clients (see ``app/infrastructure/session_store.py``
-    for why), so building them here — rather than lazily per-request — keeps
+    for why), so building them here - rather than lazily per-request - keeps
     the cost of the ``create_database_if_not_exists``/``create_container_if_not_exists``
     round-trip out of the request path.
 
     Named ``fastapi_app`` rather than ``app`` so it doesn't shadow this
     module's own top-level ``app = create_app()`` instance (the one
-    ``uvicorn app.web.main:app`` actually serves) — same reasoning as
+    ``uvicorn app.web.main:app`` actually serves) - same reasoning as
     ``create_app``'s local below.
     """
     session_store = CosmosSessionStore()
@@ -73,7 +74,7 @@ async def lifespan(fastapi_app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        # Each store's close() is independent — one raising must not stop the
+        # Each store's close() is independent - one raising must not stop the
         # other from closing, and must not turn a normal shutdown (Ctrl+C,
         # SIGTERM, --reload restarting) into "Application shutdown failed."
         # the way an unguarded call did before (see the CosmosClient fix in
@@ -119,9 +120,9 @@ def create_app() -> FastAPI:
         """Returns the caller's identity and App Roles.
 
         With ``AUTH_ENABLED=false`` this returns an empty/anonymous identity
-        rather than 401ing, since ``require_user`` is a no-op in that mode —
+        rather than 401ing, since ``require_user`` is a no-op in that mode -
         same behavior as every other route until real endpoints are added.
-        ``roles`` in that mode is every role (``ALL_APP_ROLES``), not empty —
+        ``roles`` in that mode is every role (``ALL_APP_ROLES``), not empty -
         it reports what the caller can actually *do*, and with auth
         disabled ``require_role`` lets every action through regardless of
         role, so reporting an empty list here would be misleading. The
@@ -146,6 +147,9 @@ def create_app() -> FastAPI:
         requirements_router, dependencies=[Depends(require_user)]
     )
     fastapi_app.include_router(artifacts_router, dependencies=[Depends(require_user)])
+    fastapi_app.include_router(
+        work_breakdown_router, dependencies=[Depends(require_user)]
+    )
 
     return fastapi_app
 

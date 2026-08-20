@@ -18,11 +18,11 @@ addopts = "-ra"
 asyncio_mode = "auto"
 
 [tool.mypy]
-# Bumped from "3.11" to "3.12" — this no longer needs to match
+# Bumped from "3.11" to "3.12" - this no longer needs to match
 # `requires-python` above (still ">=3.11") the way it once did. mypy's
 # `python_version` also controls what *syntax* it accepts when parsing
 # third-party stub files, not just this project's own code, and modern
-# numpy ships stubs using PEP 695 `type` aliases (3.12+ only syntax) —
+# numpy ships stubs using PEP 695 `type` aliases (3.12+ only syntax) -
 # see the `numpy`/`numpy.*` override below for why numpy gets pulled in
 # at all despite not being a direct or transitive dependency. The
 # `follow_imports = "skip"` override there is normally enough to avoid
@@ -46,11 +46,11 @@ target-version = "py311"
 # FAST added for FastAPI-specific SonarQube-equivalent checks: FAST001
 # ("response_model duplicates the return type annotation") and FAST002
 # ("use Annotated for FastAPI dependency injection instead of a mutable
-# default argument") — both raised by SonarQube against app/api/routes/*.py.
+# default argument") - both raised by SonarQube against app/api/routes/*.py.
 select = ["E", "F", "I", "B", "UP", "FAST"]
 # UP046/UP047 ("use PEP 695 type parameter syntax") suggest a
 # `class Foo[T]:`/`def foo[T](...)` syntax that only parses on Python
-# 3.12+ — this project's `target-version = "py311"` above (matching
+# 3.12+ - this project's `target-version = "py311"` above (matching
 # `requires-python = ">=3.11"`) is supposed to suppress both rules, and
 # does under the version of ruff this was verified against. They're
 # ignored explicitly anyway rather than left to that inference, because
@@ -60,7 +60,7 @@ select = ["E", "F", "I", "B", "UP", "FAST"]
 # its own default) would otherwise "fix" `app/design/comparison.py`'s
 # `ListDiffChange`/`ListDiff`/`_diff_by_id` and
 # `app/infrastructure/sync_bridge.py`'s `run_sync` into syntax that
-# fails to parse for anyone still on 3.11 — silently breaking the
+# fails to parse for anyone still on 3.11 - silently breaking the
 # `>=3.11` support this project advertises. Explicit `ignore` doesn't
 # depend on that inference resolving the same way everywhere.
 ignore = ["UP046", "UP047"]
@@ -81,25 +81,25 @@ ignore_missing_imports = true
 disallow_untyped_calls = false
 
 [[tool.mypy.overrides]]
-# msal (used only by scripts/get_dev_token.py, a manual-testing helper —
+# msal (used only by scripts/get_dev_token.py, a manual-testing helper -
 # not imported by the app itself) ships no py.typed marker either.
 module = ["msal"]
 ignore_missing_imports = true
 disallow_untyped_calls = false
 
 [[tool.mypy.overrides]]
-# This project has no direct or transitive dependency on numpy — but
+# This project has no direct or transitive dependency on numpy - but
 # `openai/_extras/numpy_proxy.py` (imported by `openai.resources
 # .embeddings`, which `openai/__init__.py` always loads) does
 # `if TYPE_CHECKING: import numpy`, so mypy will still try to resolve and
 # fully parse numpy's stubs *if numpy happens to be installed at all* in
-# whatever environment mypy runs in — e.g. a dev virtualenv that also has
+# whatever environment mypy runs in - e.g. a dev virtualenv that also has
 # numpy for unrelated reasons (data-science tooling, a different project
 # sharing the same venv, etc.). Some numpy stub versions use newer syntax
 # (PEP 695 `type` aliases) than an older `python_version` target would
 # support (this project's own target is "3.12" now, see above,
-# specifically because of this), which fails as a hard parse error — "Type statement is
-# only supported in Python 3.12 and greater" — and aborts the whole mypy
+# specifically because of this), which fails as a hard parse error - "Type statement is
+# only supported in Python 3.12 and greater" - and aborts the whole mypy
 # run before it checks anything else. `follow_imports = "skip"` stops
 # mypy from ever opening numpy's source/stubs (treating the import as
 # `Any` instead), which sidesteps this regardless of which numpy version

@@ -24,7 +24,7 @@ function ArchitectureSummary({ before, after }: { before?: string; after: string
 }
 
 /** Requirement ID → every component/interface that traces back to it,
- * built from the artifact's own `requirement_ids` fields — never invented,
+ * built from the artifact's own `requirement_ids` fields - never invented,
  * only reorganized for display. */
 function buildTraceability(data: SystemDesignArtifact): Map<string, string[]> {
   const trace = new Map<string, string[]>()
@@ -70,7 +70,7 @@ export function ArchitectureView({
           renderItem={(c) => (
             <>
               <code>{c.id}</code> <strong>{c.name}</strong>
-              {c.domain && <span className="domain-badge">{c.domain}</span>} —{" "}
+              {c.domain && <span className="domain-badge">{c.domain}</span>} -{" "}
               {c.responsibility}
             </>
           )}
@@ -83,7 +83,7 @@ export function ArchitectureView({
               className={c.id === highlightedComponentId ? "highlighted" : undefined}
             >
               <code>{c.id}</code> <strong>{c.name}</strong>
-              {c.domain && <span className="domain-badge">{c.domain}</span>} —{" "}
+              {c.domain && <span className="domain-badge">{c.domain}</span>} -{" "}
               {c.responsibility}
             </li>
           ))}
@@ -99,7 +99,7 @@ export function ArchitectureView({
           renderItem={(iface) => (
             <>
               <code>{iface.id}</code> <strong>{iface.name}</strong>:{" "}
-              {iface.source_component} → {iface.target_component} — {iface.purpose}
+              {iface.source_component} → {iface.target_component} - {iface.purpose}
             </>
           )}
         />
@@ -108,7 +108,7 @@ export function ArchitectureView({
           {data.interfaces.map((iface) => (
             <li key={iface.id}>
               <code>{iface.id}</code> <strong>{iface.name}</strong>:{" "}
-              {iface.source_component} → {iface.target_component} — {iface.purpose}
+              {iface.source_component} → {iface.target_component} - {iface.purpose}
             </li>
           ))}
         </ul>
@@ -128,7 +128,7 @@ export function ArchitectureView({
           emptyLabel="None."
           renderItem={(dep) => (
             <>
-              <code>{dep.id}</code> <strong>{dep.name}</strong> — {dep.purpose}
+              <code>{dep.id}</code> <strong>{dep.name}</strong> - {dep.purpose}
             </>
           )}
         />
@@ -136,7 +136,7 @@ export function ArchitectureView({
         <ul>
           {data.external_dependencies.map((dep) => (
             <li key={dep.id}>
-              <code>{dep.id}</code> <strong>{dep.name}</strong> — {dep.purpose}
+              <code>{dep.id}</code> <strong>{dep.name}</strong> - {dep.purpose}
             </li>
           ))}
         </ul>

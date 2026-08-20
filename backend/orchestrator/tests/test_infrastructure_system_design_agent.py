@@ -35,7 +35,7 @@ class _FakeAgentResponse:
 
 class _FakeUnderlyingAgent:
     """Stands in for the ``agent_framework.Agent`` instance returned by
-    ``OpenAIChatClient.as_agent`` — see
+    ``OpenAIChatClient.as_agent`` - see
     ``tests/test_infrastructure_requirements_agent.py`` for the same
     pattern applied to the requirements agent."""
 
@@ -129,7 +129,7 @@ def test_prompt_forbids_interfaces_targeting_external_dependencies() -> None:
     (e.g. "Payment Service" -> "Stripe API"), which
     ArchitectureValidator correctly rejects (interfaces are
     component-to-component only; a dependency's usage belongs in that
-    dependency's own `used_by_components`) — see
+    dependency's own `used_by_components`) - see
     test_design_validator.py's coverage of that rule. The fix here is
     prompt-side: make the constraint explicit so the model doesn't produce
     that shape in the first place. This test guards against that

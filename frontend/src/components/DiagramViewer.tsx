@@ -4,7 +4,7 @@ interface DiagramViewerProps {
   svg: string
   /** Called with a component id when the user clicks a node whose Graphviz
    * `<title>` matches one, or `null` when they click empty space. Lets the
-   * architecture list below highlight/scroll to match — see
+   * architecture list below highlight/scroll to match - see
    * ArchitectureView's `highlightedComponentId`. */
   onInspect?: (componentId: string | null) => void
 }
@@ -14,7 +14,7 @@ const MAX_SCALE = 4
 
 /** Strip anything that could execute script from Graphviz-generated SVG
  * before injecting it. Graphviz escapes label text itself, so this is
- * defense-in-depth rather than the primary safeguard — labels can contain
+ * defense-in-depth rather than the primary safeguard - labels can contain
  * AI-generated, ultimately user-influenced text (component names/
  * responsibilities), so treat the markup as untrusted even though it's
  * produced by our own backend. */

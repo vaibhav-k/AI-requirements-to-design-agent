@@ -1,7 +1,7 @@
 """``DiagramImageInterpreterPort`` implementation backed by Microsoft
 Agent Framework.
 
-The diagram-image analogue of ``image_classifier_agent.py`` — same
+The diagram-image analogue of ``image_classifier_agent.py`` - same
 wiring notes apply (see that module's docstring for the full multimodal-
 input rationale, not repeated here).
 
@@ -26,7 +26,7 @@ _INSTRUCTIONS = (
     "well-architected system design: identify every component, "
     "interface, and external dependency it depicts, correct anything "
     "that is structurally unclear, redundant, or inconsistent, and "
-    "return the requested structured architecture — not a description "
+    "return the requested structured architecture - not a description "
     "of the image."
 )
 
@@ -98,7 +98,7 @@ def _build_prompt(
     """Build the diagram-interpretation prompt.
 
     Content unchanged from the pre-migration
-    ``DiagramImageInterpreter._build_prompt`` — only where it runs
+    ``DiagramImageInterpreter._build_prompt`` - only where it runs
     (behind a Microsoft Agent Framework ``Agent`` instead of a raw
     ``openai.OpenAI`` client) has changed.
     """
@@ -132,14 +132,14 @@ Identify:
 
 - Every major logical component depicted (boxes/nodes), each with a
   unique ID, a name, and its responsibility.
-- Each component's "domain" — a short group/category name. If the image
+- Each component's "domain" - a short group/category name. If the image
   itself visually groups components (a labeled outer box/section/swimlane
   containing several inner boxes, a color-coded region, etc.), use that
   section's label as the domain, character-for-character, for every
   component inside it. If the image has no visible grouping, infer a
   small number of sensible domains (roughly 3-8) from what the
   components do, and use the SAME domain string for every component that
-  belongs together — this is what lets the redrawn diagram visually
+  belongs together - this is what lets the redrawn diagram visually
   cluster related components instead of scattering them.
 - Every interface/relationship between components (arrows), each with a
   unique ID, name, purpose, source component, and target component.
@@ -147,7 +147,7 @@ Identify:
   external systems drawn distinctly from the system's own components),
   each with a unique ID, name, purpose, and which components use it.
 - Open questions or assumptions needed to fill gaps the image leaves
-  ambiguous — an unlabeled arrow, an illegible or ambiguous box.
+  ambiguous - an unlabeled arrow, an illegible or ambiguous box.
 
 Return the redrawn architecture as the requested structured format: a
 clean, well-architected version of what the image depicts, not a literal

@@ -56,8 +56,8 @@ def make_design(**overrides: object) -> SystemDesignArtifact:
 
 @pytest.fixture
 def fakes() -> dict[str, MagicMock]:
-    # Every use case now exposes exactly one method — async `execute(...)`
-    # — so there's no more sync/async pair to keep in sync here. The sync
+    # Every use case now exposes exactly one method - async `execute(...)`
+    # - so there's no more sync/async pair to keep in sync here. The sync
     # routes (`start_run`/`refine_run`) reach `execute` through
     # `run_sync` (see app/infrastructure/sync_bridge.py); the already-async
     # routes/helpers (`start_run_from_upload`/`refine_run_from_upload`/
@@ -91,24 +91,24 @@ def fakes() -> dict[str, MagicMock]:
 
 @pytest.fixture
 def client(fakes: dict[str, MagicMock]) -> Iterator[TestClient]:
-    """A ``TestClient`` with ``AUTH_ENABLED=false`` — every ``require_role``/
+    """A ``TestClient`` with ``AUTH_ENABLED=false`` - every ``require_role``/
     ``require_user``/ownership check is a no-op, so these tests exercise
     route *logic* only (see ``test_rbac.py`` for the auth-turned-on
     counterpart).
 
-    ``get_settings`` is patched at every layer that calls it directly —
+    ``get_settings`` is patched at every layer that calls it directly -
     ``app.web.main`` (app construction), ``app.security.auth``
     (``require_user``/``require_role``), and ``app.api.ownership``
     (``is_admin``/``owns``) each import their own bound name, so patching
     only one (as this used to) leaves the other two reading the *real*,
-    unpatched ``Settings()`` — whatever a developer's actual environment/
+    unpatched ``Settings()`` - whatever a developer's actual environment/
     ``.env`` resolves ``AUTH_ENABLED`` to. That only "worked" by coincidence
     whenever the real environment happened to default to
     ``AUTH_ENABLED=false`` too; the moment a local ``.env`` sets it to
     ``true`` (e.g. to test real Entra ID sign-in against the frontend),
     every route here starts 401ing before its own logic ever runs. All
-    three are patched for the fixture's whole lifetime — not just during
-    ``create_app()`` — the same shape as ``test_rbac.py``'s ``rbac_app``.
+    three are patched for the fixture's whole lifetime - not just during
+    ``create_app()`` - the same shape as ``test_rbac.py``'s ``rbac_app``.
     """
     settings = Settings(auth_enabled=False)
     with patch("app.web.main.get_settings", return_value=settings):
@@ -261,7 +261,7 @@ def test_accept_run_generates_and_persists_the_architecture(
 
     # `record` is mutated in place across the route's two upsert() calls, so
     # inspecting fakes["store"].upsert.call_args_list *after* the request
-    # would show the same (final) object twice — snapshot the stage at the
+    # would show the same (final) object twice - snapshot the stage at the
     # moment each upsert actually happens instead.
     stage_snapshots: list[str] = []
 
@@ -327,7 +327,7 @@ def test_accept_run_returns_422_and_reverts_stage_when_generation_fails(
 
     assert response.status_code == 422
     # Once to mark "generating", once to revert to "requirements" + set error
-    # — a failed generation must not leave the session permanently stuck on
+    # - a failed generation must not leave the session permanently stuck on
     # "generating", unable to ever retry accept.
     assert stage_snapshots == ["generating", "requirements"]
     assert record.error is not None
@@ -501,7 +501,7 @@ def test_refine_architecture_returns_422_and_reverts_stage_when_generation_fails
 
     assert response.status_code == 422
     # Once to mark "generating", once to revert to "architecture" (not
-    # "requirements" — the previous design is still valid) + set error.
+    # "requirements" - the previous design is still valid) + set error.
     assert stage_snapshots == ["generating", "architecture"]
     assert record.error is not None
 
@@ -577,7 +577,7 @@ def test_reject_run_records_a_decision_without_changing_stage_or_design(
 def test_reject_run_does_not_block_a_later_refine_architecture_call(
     client: TestClient, fakes: dict[str, MagicMock]
 ) -> None:
-    """Rejection is a human judgment call, not a generation failure — the
+    """Rejection is a human judgment call, not a generation failure - the
     session must stay in the "architecture" stage so refine-architecture
     still works afterward, matching the intended reject → refine →
     re-approve flow."""
@@ -609,7 +609,7 @@ def test_reject_run_does_not_block_a_later_refine_architecture_call(
     assert refine_response.status_code == 200
     body = refine_response.json()
     assert body["design_version"] == 2
-    # The new version resets to "pending" — the reject decision doesn't
+    # The new version resets to "pending" - the reject decision doesn't
     # carry over to a design that didn't exist when it was made.
     assert body["approval_status"] == "pending"
     # But the rejection is still there in history, not erased.
@@ -652,7 +652,7 @@ def test_list_runs_returns_empty_when_caller_is_anonymous(
     client: TestClient, fakes: dict[str, MagicMock]
 ) -> None:
     """With AUTH_ENABLED=false, owner_oid is always None, so this must
-    return [] rather than every session anyone has ever created — it must
+    return [] rather than every session anyone has ever created - it must
     not fall back to listing everything."""
     response = client.get("/requirements-runs")
 
@@ -687,9 +687,9 @@ def test_start_run_from_upload_extracts_text_and_creates_a_session(
     fakes["document_extractor"].extract.return_value = "Extracted requirements text."
     fakes["requirements_analyzer"].execute.return_value = make_requirements()
     fakes["artifact_store"].save.return_value = "dev/x/requirements/v1.json"
-    fakes[
-        "artifact_store"
-    ].save_source_file.return_value = "dev/x/requirements/v1_source.pdf"
+    fakes["artifact_store"].save_source_file.return_value = (
+        "dev/x/requirements/v1_source.pdf"
+    )
 
     response = client.post(
         "/requirements-runs/upload",
@@ -903,7 +903,146 @@ def test_rename_run_returns_404_for_an_unknown_session(
 
 
 # --------------------------------------------------------------------------- #
-# Image input classification (app/vision.py) — start/refine from an image
+# PUT /{session_id}/requirements - manual requirements entry, no AI call
+# --------------------------------------------------------------------------- #
+
+
+def test_edit_requirements_adds_functional_requirements_from_architecture_stage(
+    client: TestClient, fakes: dict[str, MagicMock]
+) -> None:
+    """The primary use case: a diagram-stub session sitting in
+    STAGE_ARCHITECTURE with no functional/non-functional requirements gets
+    real ones added by hand, so it can later produce a work breakdown."""
+    record = SessionRecord(
+        session_id="abc-123",
+        stage="architecture",
+        requirements_version=1,
+        requirements=make_requirements(),
+        source_filename=None,
+    )
+    fakes["store"].get.return_value = record
+    fakes["artifact_store"].save.return_value = "dev/abc-123/requirements/v2.json"
+
+    response = client.put(
+        "/requirements-runs/abc-123/requirements",
+        json={
+            "functional_requirements": [
+                {"description": "Users can log in.", "priority": "high"},
+                {"description": "Users can log out."},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["stage"] == "architecture"
+    assert body["requirements_version"] == 2
+    frs = body["requirements"]["functional_requirements"]
+    assert [fr["id"] for fr in frs] == ["FR-001", "FR-002"]
+    assert frs[0]["description"] == "Users can log in."
+    assert frs[0]["priority"] == "high"
+    assert frs[1]["priority"] == "medium"
+    fakes["store"].upsert.assert_called_once()
+
+
+def test_edit_requirements_works_from_requirements_stage(
+    client: TestClient, fakes: dict[str, MagicMock]
+) -> None:
+    record = SessionRecord(
+        session_id="abc-123",
+        stage="requirements",
+        requirements_version=1,
+        requirements=make_requirements(),
+    )
+    fakes["store"].get.return_value = record
+    fakes["artifact_store"].save.return_value = "dev/abc-123/requirements/v2.json"
+
+    response = client.put(
+        "/requirements-runs/abc-123/requirements",
+        json={
+            "non_functional_requirements": [
+                {"description": "Must respond within 200ms."},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["stage"] == "requirements"
+    nfrs = body["requirements"]["non_functional_requirements"]
+    assert [nfr["id"] for nfr in nfrs] == ["NFR-001"]
+
+
+def test_edit_requirements_rejected_while_generating(
+    client: TestClient, fakes: dict[str, MagicMock]
+) -> None:
+    record = SessionRecord(
+        session_id="abc-123",
+        stage="generating",
+        requirements_version=1,
+        requirements=make_requirements(),
+    )
+    fakes["store"].get.return_value = record
+
+    response = client.put(
+        "/requirements-runs/abc-123/requirements",
+        json={"functional_requirements": [{"description": "x"}]},
+    )
+
+    assert response.status_code == 409
+    fakes["store"].upsert.assert_not_called()
+
+
+def test_edit_requirements_with_only_business_goal_leaves_requirements_untouched(
+    client: TestClient, fakes: dict[str, MagicMock]
+) -> None:
+    existing = make_requirements(
+        functional_requirements=[
+            {
+                "id": "FR-001",
+                "description": "Existing FR.",
+                "priority": "medium",
+                "rationale": None,
+            }
+        ],
+    )
+    record = SessionRecord(
+        session_id="abc-123",
+        stage="architecture",
+        requirements_version=1,
+        requirements=existing,
+    )
+    fakes["store"].get.return_value = record
+    fakes["artifact_store"].save.return_value = "dev/abc-123/requirements/v2.json"
+
+    response = client.put(
+        "/requirements-runs/abc-123/requirements",
+        json={"business_goal": "Ship faster."},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["requirements"]["business_goal"] == "Ship faster."
+    assert [
+        fr["id"] for fr in body["requirements"]["functional_requirements"]
+    ] == ["FR-001"]
+
+
+def test_edit_requirements_returns_404_for_an_unknown_session(
+    client: TestClient, fakes: dict[str, MagicMock]
+) -> None:
+    fakes["store"].get.return_value = None
+
+    response = client.put(
+        "/requirements-runs/missing/requirements",
+        json={"business_goal": "x"},
+    )
+
+    assert response.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# Image input classification (app/vision.py) - start/refine from an image
 # --------------------------------------------------------------------------- #
 
 
@@ -912,7 +1051,7 @@ def test_start_run_from_upload_with_document_image_uses_ocr_pipeline(
 ) -> None:
     """A PNG classified as a document screenshot goes through the exact
     same OCR-extraction-then-analyze pipeline as before image
-    classification existed — the diagram interpreter/design pipeline is
+    classification existed - the diagram interpreter/design pipeline is
     never touched."""
     fakes["image_classifier"].execute.return_value = ImageClassification(
         kind="document", reasoning="It's a screenshot of typed notes."
@@ -920,9 +1059,9 @@ def test_start_run_from_upload_with_document_image_uses_ocr_pipeline(
     fakes["document_extractor"].extract.return_value = "Extracted requirements text."
     fakes["requirements_analyzer"].execute.return_value = make_requirements()
     fakes["artifact_store"].save.return_value = "dev/x/requirements/v1.json"
-    fakes[
-        "artifact_store"
-    ].save_source_file.return_value = "dev/x/requirements/v1_source.png"
+    fakes["artifact_store"].save_source_file.return_value = (
+        "dev/x/requirements/v1_source.png"
+    )
 
     response = client.post(
         "/requirements-runs/upload",
@@ -954,9 +1093,9 @@ def test_start_run_from_upload_with_diagram_image_jumps_to_architecture(
     fakes["diagram_generator"].generate.return_value = "<svg></svg>"
     fakes["artifact_store"].save_design_json.return_value = "dev/x/design/v1.json"
     fakes["artifact_store"].save_design_svg.return_value = "dev/x/design/v1.svg"
-    fakes[
-        "artifact_store"
-    ].save_source_file.return_value = "dev/x/requirements/v1_source.png"
+    fakes["artifact_store"].save_source_file.return_value = (
+        "dev/x/requirements/v1_source.png"
+    )
     fakes["artifact_store"].save.return_value = "dev/x/requirements/v1.json"
 
     response = client.post(
@@ -1031,9 +1170,9 @@ def test_refine_run_from_upload_with_diagram_image_jumps_to_architecture(
     fakes["diagram_generator"].generate.return_value = "<svg></svg>"
     fakes["artifact_store"].save_design_json.return_value = "dev/abc-123/design/v1.json"
     fakes["artifact_store"].save_design_svg.return_value = "dev/abc-123/design/v1.svg"
-    fakes[
-        "artifact_store"
-    ].save_source_file.return_value = "dev/abc-123/requirements/v1_source.png"
+    fakes["artifact_store"].save_source_file.return_value = (
+        "dev/abc-123/requirements/v1_source.png"
+    )
 
     response = client.post(
         "/requirements-runs/abc-123/refine/upload",
@@ -1044,7 +1183,7 @@ def test_refine_run_from_upload_with_diagram_image_jumps_to_architecture(
     body = response.json()
     assert body["stage"] == "architecture"
     assert body["design_version"] == 1
-    # Requirements already existed on this session — the diagram branch
+    # Requirements already existed on this session - the diagram branch
     # must not overwrite them with a stub.
     assert body["requirements"]["summary"] == "A todo app."
     fakes["requirements_analyzer"].execute.assert_not_called()
@@ -1054,7 +1193,7 @@ def test_refine_run_from_upload_with_diagram_image_blocked_outside_requirements(
     client: TestClient, fakes: dict[str, MagicMock]
 ) -> None:
     """The existing stage gate runs before image classification even
-    starts — an image upload doesn't bypass it."""
+    starts - an image upload doesn't bypass it."""
     record = SessionRecord(session_id="abc-123", stage="architecture")
     fakes["store"].get.return_value = record
 

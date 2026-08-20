@@ -32,7 +32,7 @@ def test_dependency_icon_prefers_key_vault_over_generic_storage_keyword() -> Non
     """Regression test: "Secret storage." (a Key Vault dependency's
     purpose text) contains the generic word "storage", which used to be
     checked before the more specific "key vault"/"secret" keywords and
-    so incorrectly won — the dependency got a blob storage icon instead
+    so incorrectly won - the dependency got a blob storage icon instead
     of the Key Vault one. Confirmed against a real rendered diagram
     before this was fixed."""
 
@@ -60,7 +60,7 @@ def test_component_icon_prefers_pipeline_name_over_container_in_body() -> None:
 
 def test_component_icon_checks_name_before_responsibility() -> None:
     """A keyword appearing only in the responsibility text (not the
-    name) is still matched — name-first doesn't mean responsibility is
+    name) is still matched - name-first doesn't mean responsibility is
     ignored, only that it's checked second."""
 
     path = component_icon_path("Primary Store", "Backed by Azure Cosmos DB.")

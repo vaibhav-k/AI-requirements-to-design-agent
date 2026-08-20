@@ -2,7 +2,7 @@
 
 ``SessionRecord`` moved here, verbatim, from
 ``app/infrastructure/session_store.py`` as part of "Ports + adapters for
-storage" (see README -> "Clean Architecture Migration") — the same "pure
+storage" (see README -> "Clean Architecture Migration") - the same "pure
 entity, zero I/O" home ``app.domain.requirements``/``app.domain.design``
 already give their own bounded contexts' entities.
 
@@ -12,14 +12,14 @@ would otherwise need to know about. It stays here anyway rather than
 splitting it into a separate infrastructure-only wrapper type, because
 every layer above the store (``app/api/routes/requirements.py``'s
 ``_upsert_guarded``, ``app/api/ownership.py``) already reads/threads it
-through as plain data — "the record I read back has a concurrency token
+through as plain data - "the record I read back has a concurrency token
 I hand back on write" is a genuinely cross-cutting idea a fair number of
 storage backends share (Cosmos ETags, S3 version IDs, a bare row
 version column), not something unique to
 ``app.infrastructure.session_store.CosmosSessionStore``. Splitting it out
 would mean either every route also imports an infrastructure-only type
 just to pass it through unread, or ``SessionStorePort`` doing the
-threading itself — neither reads as clearer than accepting this one
+threading itself - neither reads as clearer than accepting this one
 field as domain-adjacent plumbing.
 """
 
@@ -32,6 +32,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.design import ApprovalDecision, SystemDesignArtifact
 from app.domain.requirements import RequirementsArtifact
+from app.domain.work_breakdown import WorkBreakdownArtifact
 
 
 def utcnow_iso() -> str:
@@ -45,9 +46,9 @@ class SessionRecord(BaseModel):
     every analyze/refine (``DesignSession.version``). ``design_version`` bumps
     the same way once an architecture exists: once on accept, and again on
     every subsequent ``refine-architecture`` call (``ArchitectureSession.version``)
-    — the architecture analogue of requirements refinement. ``approval_status``/
+    - the architecture analogue of requirements refinement. ``approval_status``/
     ``approval_history`` track whether the *current* design version has been
-    signed off on — see ``app/api/routes/requirements.py``'s
+    signed off on - see ``app/api/routes/requirements.py``'s
     ``approve_run``/``reject_run``.
     """
 
@@ -62,11 +63,18 @@ class SessionRecord(BaseModel):
     distinct from ``session_id`` and from ``owner_name``. ``None`` until
     someone renames it (``PATCH /requirements-runs/{id}/name``), in which
     case the UI falls back to showing a shortened ``session_id``. Purely a
-    label — never read by any analyzer or generation step, and renaming
+    label - never read by any analyzer or generation step, and renaming
     doesn't bump any version counter.
     """
 
-    stage: str = "requirements"  # "requirements" | "generating" | "architecture"
+    stage: str = "requirements"
+    # "requirements" | "generating" | "architecture" | "work_breakdown".
+    # "work_breakdown" is reached from "architecture" only once the current
+    # design has been approved (see ``app/api/routes/work_breakdown.py``'s
+    # ``generate_work_breakdown``) - the fourth and final stage of the
+    # pipeline, one Feature -> Story -> Task breakdown per approved
+    # architecture. Like "architecture", it's re-entered via "generating"
+    # on every ``refine`` call.
 
     source_text: str = ""
     source_filename: str | None = None
@@ -90,14 +98,32 @@ class SessionRecord(BaseModel):
     design_blob: str | None = None
     diagram_blob: str | None = None
 
+    # Mirrors design_version/design/design_blob above, one stage later in
+    # the pipeline: 0/None until the first successful
+    # ``POST /requirements-runs/{id}/work-breakdown`` call (only reachable
+    # once ``stage == "architecture"`` and ``approval_status == "approved"`
+    # - see app/api/routes/work_breakdown.py), then bumped by every
+    # subsequent ``.../work-breakdown/refine`` call the same way
+    # design_version bumps on refine-architecture.
+    work_breakdown_version: int = 0
+    work_breakdown: WorkBreakdownArtifact | None = None
+    work_breakdown_blob: str | None = None
+    # Blob name of the most recently rendered CSV export for
+    # ``work_breakdown``/``work_breakdown_version`` (see
+    # ``ArtifactStorePort.save_work_breakdown_csv``). Unlike
+    # ``work_breakdown_blob``, this is a cache of a derived, re-computable
+    # artifact rather than an immutable version - re-exporting the same
+    # ``work_breakdown_version`` overwrites it rather than conflicting.
+    work_breakdown_export_blob: str | None = None
+
     # "pending" | "approved" | "rejected". Only meaningful once `stage` is
-    # `"architecture"` — reset to "pending" every time `design_version`
+    # `"architecture"` - reset to "pending" every time `design_version`
     # changes (on `accept` and on every `refine-architecture`), since an
     # approval decision made against one design version should never be
     # read as covering a *different*, later version of that design. See
     # `app/api/routes/requirements.py`'s `approve_run`/`reject_run`.
     approval_status: str = "pending"
-    # Append-only — every decision ever made against this session, oldest
+    # Append-only - every decision ever made against this session, oldest
     # first, even ones superseded by a later refinement + re-approval.
     # `approval_status` alone answers "what's the current decision";
     # `approval_history` answers "what decisions were ever made, by whom,
@@ -111,11 +137,11 @@ class SessionRecord(BaseModel):
 
     # Cosmos's own concurrency token (its ``_etag`` system property), carried
     # on the model so a later ``upsert()`` can pass it back as an if-match
-    # condition — see ``CosmosSessionStore.upsert``. Populated automatically
+    # condition - see ``CosmosSessionStore.upsert``. Populated automatically
     # when a record is read back from Cosmos (``get``/``list_for_owner``);
     # ``None`` on a record that was only ever constructed in Python and never
     # round-tripped, in which case ``upsert`` falls back to an unconditional
-    # write. Never sent as part of the document body (``exclude=True``) —
+    # write. Never sent as part of the document body (``exclude=True``) -
     # Cosmos manages ``_etag`` itself, so this is read-only, not writable.
     etag: str | None = Field(default=None, alias="_etag", exclude=True)
 

@@ -1,33 +1,69 @@
 import { useEffect, useState } from "react"
 
-import { ApiError, useRequirementsApi } from "../api"
+import { friendlyErrorMessage, useRequirementsApi } from "../api"
 import { hasAnyRole, ROLE_ARCHITECT, ROLE_REVIEWER, ROLE_USER } from "../permissions"
-import type { RequirementsArtifact, RequirementsRunView, SystemDesignArtifact } from "../types"
+import type {
+  RequirementsArtifact,
+  RequirementsRunView,
+  SystemDesignArtifact,
+  WorkBreakdownArtifact,
+} from "../types"
 import { useCurrentUser } from "../useCurrentUser"
 import { useResizableWidth } from "../useResizableWidth"
 import { ArtifactPanel, type ArtifactTab } from "./ArtifactPanel"
 import { Conversation, type ConversationStatus, type TranscriptEntry } from "./Conversation"
+import { DIAGRAM_STUB_BUSINESS_GOAL } from "./RequirementsEditor"
 
 interface WorkspaceProps {
-  /** null means "no session yet" — the conversation is offered as the way
+  /** null means "no session yet" - the conversation is offered as the way
    * to start one, mirroring the old NewRunForm but without a separate view. */
   sessionId: string | null
   onSessionCreated: (sessionId: string) => void
 }
 
 function summarizeRequirements(requirements: RequirementsArtifact): string {
-  return `${requirements.summary}\n\nBusiness goal: ${requirements.business_goal}`
+  const base = `${requirements.summary}\n\nBusiness goal: ${requirements.business_goal}`
+  // A diagram-uploaded session gets this exact placeholder rather than a
+  // real business goal (see `_stub_requirements_from_diagram`) - call out
+  // where to fix that instead of leaving the raw placeholder unexplained.
+  if (requirements.business_goal === DIAGRAM_STUB_BUSINESS_GOAL) {
+    return (
+      `${base}\n\nThis session started from a diagram upload, so the ` +
+      "business goal, summary, and functional/non-functional requirements " +
+      "weren't specified. Head to the Requirements tab to fill them in " +
+      "there - Task Planning needs at least one functional or " +
+      "non-functional requirement before it can generate a work breakdown."
+    )
+  }
+  return base
 }
 
 function summarizeDesign(design: SystemDesignArtifact): string {
   return design.architecture_summary
 }
 
+/** A one-line summary of a just-generated/refined breakdown for the
+ * transcript - counts only, never invents content, same spirit as
+ * `summarizeRequirements`/`summarizeDesign` above. */
+function summarizeWorkBreakdown(breakdown: WorkBreakdownArtifact): string {
+  const featureCount = breakdown.features.length
+  const storyCount = breakdown.features.reduce((sum, f) => sum + f.stories.length, 0)
+  const taskCount = breakdown.features.reduce(
+    (sum, f) => sum + f.stories.reduce((s, story) => s + story.tasks.length, 0),
+    0,
+  )
+  return (
+    `Work breakdown: ${featureCount} feature${featureCount === 1 ? "" : "s"}, ` +
+    `${storyCount} stor${storyCount === 1 ? "y" : "ies"}, ` +
+    `${taskCount} task${taskCount === 1 ? "" : "s"}.`
+  )
+}
+
 /** Distinguishes the two ways `POST /accept` can fail (see
  * app/design/workflow.py's DesignGenerationWorkflowError): the analyzer's
  * own architecture validation rejected the design it produced, vs. the
  * generation call itself failed (model error, malformed JSON, etc.).
- * This is read off the real error text, not a fabricated progress signal —
+ * This is read off the real error text, not a fabricated progress signal -
  * the backend call is a single synchronous request either way. */
 function isValidationFailure(message: string): boolean {
   return message.startsWith("Architecture validation failed:")
@@ -35,26 +71,6 @@ function isValidationFailure(message: string): boolean {
 
 function nextEntryId(): string {
   return crypto.randomUUID()
-}
-
-/** Turns a caught error into transcript text — an `ApiError` with status
- * 401 ("not authenticated at all") or 403 ("authenticated, but missing the
- * role this needs") gets a message that says so in plain language rather
- * than surfacing the raw backend detail as the *only* signal; 403's
- * backend detail is already specific about which role is missing (see
- * `require_role` in app/security/auth.py), so it's appended rather than
- * replaced. Any other status, or a non-ApiError, falls back to `fallback`. */
-function friendlyErrorMessage(err: unknown, fallback: string): string {
-  if (err instanceof ApiError) {
-    if (err.status === 401) {
-      return `You're not signed in. Sign in above and try again. (${err.message})`
-    }
-    if (err.status === 403) {
-      return `You don't have permission to do this: ${err.message}`
-    }
-    return err.message
-  }
-  return fallback
 }
 
 export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
@@ -89,15 +105,21 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
         if (cancelled) return
         setRun(result)
         setStatus(result.error ? "error" : "ready")
-        // Jump straight to Architecture when opening a session that
-        // already has one — Requirements only makes sense as the default
-        // for a session that hasn't been accepted yet.
-        setActiveTab(result.design ? "architecture" : "requirements")
+        // Jump straight to the furthest stage reached when opening a
+        // session that already has one - Requirements/Architecture only
+        // make sense as the default for a session that hasn't moved past
+        // them yet.
+        setActiveTab(
+          result.work_breakdown ? "work_breakdown" : result.design ? "architecture" : "requirements",
+        )
         if (result.requirements) {
           appendEntry({ role: "assistant", content: summarizeRequirements(result.requirements) })
         }
         if (result.design) {
           appendEntry({ role: "assistant", content: summarizeDesign(result.design) })
+        }
+        if (result.work_breakdown) {
+          appendEntry({ role: "assistant", content: summarizeWorkBreakdown(result.work_breakdown) })
         }
         if (result.error) {
           appendEntry({ role: "assistant", content: result.error, tone: "error" })
@@ -179,8 +201,39 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
       return
     }
 
+    if (run && run.stage === "work_breakdown") {
+      setBusy(true)
+      setStatus("processing")
+      api
+        .refineWorkBreakdown(sessionId, input)
+        .then((result) => {
+          setRun(result)
+          setStatus(result.error ? "error" : "ready")
+          setRefreshKey((key) => key + 1)
+          if (result.work_breakdown) {
+            appendEntry({ role: "assistant", content: summarizeWorkBreakdown(result.work_breakdown) })
+          }
+          if (result.error) {
+            appendEntry({ role: "assistant", content: result.error, tone: "error" })
+          }
+        })
+        .catch((err: unknown) => {
+          setStatus("error")
+          appendEntry({
+            role: "assistant",
+            content: `Work breakdown refinement failed: ${friendlyErrorMessage(
+              err,
+              "Could not refine the work breakdown.",
+            )}`,
+            tone: "error",
+          })
+        })
+        .finally(() => setBusy(false))
+      return
+    }
+
     if (run && run.stage !== "requirements") {
-      // Covers the "generating" stage — a refine/accept for this session is
+      // Covers the "generating" stage - a refine/accept for this session is
       // already in flight (this one, or a concurrent request), matching the
       // backend's own double-submit guard (app/api/routes/requirements.py).
       appendEntry({
@@ -286,6 +339,24 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
       .finally(() => setBusy(false))
   }
 
+  /** Applies a `PUT .../requirements` (manual, non-AI edit) result back into
+   * this session's state - same "adopt the returned view, bump refreshKey"
+   * shape every other mutation here follows. Unlike those, the API call
+   * itself lives in RequirementsEditor (closer to its own form state and
+   * error banner, the same "panel owns its own simple mutation" pattern
+   * ArtifactPanel's CSV export already uses), so this is only ever called
+   * with an already-successful result. */
+  const handleRequirementsSaved = (result: RequirementsRunView) => {
+    setRun(result)
+    setRefreshKey((key) => key + 1)
+    appendEntry({
+      role: "assistant",
+      content: result.requirements
+        ? summarizeRequirements(result.requirements)
+        : "Requirements updated.",
+    })
+  }
+
   const handleAccept = () => {
     if (!sessionId) return
     setBusy(true)
@@ -374,6 +445,55 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
       .finally(() => setBusy(false))
   }
 
+  const handleGenerateBreakdown = () => {
+    if (!sessionId) return
+    setBusy(true)
+    setStatus("processing")
+    appendEntry({ role: "user", content: "Generate work breakdown" })
+    api
+      .generateWorkBreakdown(sessionId)
+      .then((result) => {
+        setRun(result)
+        setRefreshKey((key) => key + 1)
+        if (result.work_breakdown) {
+          setStatus("ready")
+          setActiveTab("work_breakdown")
+          appendEntry({ role: "assistant", content: summarizeWorkBreakdown(result.work_breakdown) })
+        } else if (result.error) {
+          setStatus("error")
+          appendEntry({ role: "assistant", content: result.error, tone: "error" })
+        } else {
+          setStatus("ready")
+        }
+      })
+      .catch((err: unknown) => {
+        setStatus("error")
+        const detail = friendlyErrorMessage(err, "Could not generate the work breakdown.")
+        // This specific validation failure (`GenerateWorkBreakdownUseCase
+        // .execute`'s own guard, surfaced verbatim as the backend's 422
+        // detail) has one fix: add a requirement in the Requirements tab -
+        // most often hit by a diagram-originated session, whose
+        // requirements start out empty by design (see
+        // `_stub_requirements_from_diagram`). Naming the fix here saves a
+        // trip to figure out what "requirements must include at least one
+        // functional or non-functional requirement" actually means to do
+        // about it.
+        const needsRequirements = detail.includes(
+          "requirements must include at least one functional or non-functional requirement",
+        )
+        appendEntry({
+          role: "assistant",
+          content: needsRequirements
+            ? `Work breakdown generation failed: ${detail} Head to the Requirements ` +
+              "tab and add at least one functional or non-functional requirement, " +
+              "then try again."
+            : `Work breakdown generation failed: ${detail}`,
+          tone: "error",
+        })
+      })
+      .finally(() => setBusy(false))
+  }
+
   const statusLabel: Record<ConversationStatus, string> = {
     idle: "Ready",
     loading: "Loading",
@@ -388,8 +508,16 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
   const canApprove = Boolean(run && run.stage === "architecture")
   const hasRequirements = Boolean(run?.requirements)
   const hasArchitecture = Boolean(run?.design)
+  const architectureApproved = Boolean(run?.approval_status === "approved")
+  const hasWorkBreakdown = Boolean(run?.work_breakdown)
+  const canGenerateBreakdown = Boolean(
+    run &&
+      run.stage === "architecture" &&
+      run.approval_status === "approved" &&
+      run.work_breakdown_version === 0,
+  )
 
-  // Role gates — see permissions.ts and useCurrentUser.ts. Every check
+  // Role gates - see permissions.ts and useCurrentUser.ts. Every check
   // defaults to "allowed" while `!loaded` (roles haven't been fetched
   // yet) so buttons don't flash disabled on first render; the backend
   // still enforces the real permission regardless of what's shown here.
@@ -397,14 +525,19 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
   const canCreateRequirements = !rolesLoaded || hasAnyRole(roles, [ROLE_USER])
   const canManageArchitecture = !rolesLoaded || hasAnyRole(roles, [ROLE_ARCHITECT])
   const canDecideArchitecture = !rolesLoaded || hasAnyRole(roles, [ROLE_REVIEWER])
-  // "Send" does double duty (refine requirements, or refine an already-
-  // accepted architecture once `stage === "architecture"` — see
-  // `handleSend`'s own branching above) — which role it needs depends on
-  // which of those it would currently do.
+  // "Send" does triple duty (refine requirements, refine an already-
+  // accepted architecture once `stage === "architecture"`, or refine a
+  // work breakdown once `stage === "work_breakdown"` - see `handleSend`'s
+  // own branching above) - which role it needs depends on which of those
+  // it would currently do. Refining a work breakdown needs the same
+  // `Architect` role as refining the architecture it traces back to (see
+  // app/api/routes/work_breakdown.py's `refine_work_breakdown`).
   const sendAllowed =
-    run && run.stage === "architecture" ? canManageArchitecture : canCreateRequirements
+    run && (run.stage === "architecture" || run.stage === "work_breakdown")
+      ? canManageArchitecture
+      : canCreateRequirements
 
-  // Draggable split between the conversation and the artifact panel — see
+  // Draggable split between the conversation and the artifact panel - see
   // useResizableWidth's docstring; persisted separately from the sidebar's
   // own width under its own localStorage key.
   const { width: conversationWidth, startDrag: startConversationDrag } = useResizableWidth({
@@ -424,7 +557,7 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
           onSend={handleSend}
           sendAllowed={sendAllowed}
           sendDisabledReason={
-            run && run.stage === "architecture"
+            run && (run.stage === "architecture" || run.stage === "work_breakdown")
               ? "Requires the Architect role."
               : "Requires the User role."
           }
@@ -444,6 +577,11 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
           canApprove={canApprove}
           decisionAllowed={canDecideArchitecture}
           decisionDisabledReason="Requires the Reviewer role."
+          onGenerateBreakdown={handleGenerateBreakdown}
+          canGenerateBreakdown={canGenerateBreakdown}
+          generateBreakdownLabel={busy ? "Generating work breakdown…" : "Generate work breakdown"}
+          generateBreakdownAllowed={canManageArchitecture}
+          generateBreakdownDisabledReason="Requires the Architect role."
           approvalStatus={run?.approval_status ?? "pending"}
           canSend={canSend}
           placeholder={
@@ -469,8 +607,14 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
             refreshKey={refreshKey}
             hasRequirements={hasRequirements}
             hasArchitecture={hasArchitecture}
+            architectureApproved={architectureApproved}
+            hasWorkBreakdown={hasWorkBreakdown}
             activeTab={activeTab}
             onTabChange={setActiveTab}
+            currentRequirements={run?.requirements ?? null}
+            onRequirementsSaved={handleRequirementsSaved}
+            editRequirementsAllowed={canCreateRequirements}
+            editRequirementsDisabledReason="Requires the User role."
           />
         ) : (
           <p className="muted">

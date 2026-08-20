@@ -4,7 +4,7 @@ Everything here is a pure entity or value object: plain data plus
 validation, with **zero I/O and zero dependency on any framework,
 SDK, or outer layer** (`app.application`, `app.infrastructure`,
 `app.api`, `app.web`, `app.mcp`). Pydantic is the one exception this
-project accepts as a "shared kernel" dependency — it buys validation
+project accepts as a "shared kernel" dependency - it buys validation
 and (de)serialization for free and every layer already needs to pass
 these models across process/HTTP/MCP boundaries, but domain modules
 must never import `openai`, `azure.*`, `agent_framework`, `fastapi`,

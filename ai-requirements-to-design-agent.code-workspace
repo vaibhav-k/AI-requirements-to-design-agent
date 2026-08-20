@@ -7,7 +7,7 @@
   ],
   "settings": {
     // Applies to every folder above. Each folder also has its own
-    // .vscode/settings.json picking its own interpreter/venv — VS Code's
+    // .vscode/settings.json picking its own interpreter/venv - VS Code's
     // Python extension (Pylance) starts one language server per top-level
     // workspace folder, so each service is analyzed as its own isolated
     // project. This is what actually fixes the "Duplicate module named

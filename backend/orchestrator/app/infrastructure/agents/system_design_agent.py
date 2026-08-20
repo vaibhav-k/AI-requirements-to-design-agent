@@ -1,6 +1,6 @@
 """``SystemDesignAgentPort`` implementation backed by Microsoft Agent Framework.
 
-The design-generation analogue of ``requirements_agent.py`` — same
+The design-generation analogue of ``requirements_agent.py`` - same
 wiring notes apply (``agent_framework.openai.OpenAIChatClient`` with
 ``base_url`` routing rather than the removed Azure-specific client;
 structured output via ``ChatOptions(response_format=...)``; the parsed
@@ -84,7 +84,7 @@ def _build_prompt(
     """Build the architecture generation prompt.
 
     Content unchanged from the pre-migration ``SystemDesignAnalyzer
-    ._build_prompt`` — only where it runs (behind a Microsoft Agent
+    ._build_prompt`` - only where it runs (behind a Microsoft Agent
     Framework ``Agent`` instead of a raw ``openai.OpenAI`` client) has
     changed. See ``tests/test_infrastructure_system_design_agent.py``
     for the regression test guarding its
@@ -112,7 +112,7 @@ Use the previous architecture as the starting point. Preserve components,
 interfaces, and external dependencies that are still valid. Apply the
 requested change. Do not silently remove or rename existing components,
 interfaces, or dependencies unless the requested change explicitly calls
-for it — prefer adding or adjusting over wholesale regeneration, so
+for it - prefer adding or adjusting over wholesale regeneration, so
 existing IDs remain stable across a refinement wherever possible. Also
 preserve each existing component's "domain" string exactly as-is unless
 the requested change specifically moves it to a different group; give
@@ -135,12 +135,12 @@ DO:
 - Identify major logical system components.
 - Give every component a unique ID.
 - Describe each component's responsibility.
-- Assign every component a short "domain" — a group/category name (e.g.
+- Assign every component a short "domain" - a group/category name (e.g.
   "Client & Identity", "Data Platform", "Integration", "Finance
   Services") shared by every component that belongs together logically.
   Use the SAME domain string, character-for-character, for every
   component in that group, and keep the number of distinct domains
-  small (roughly 3-8 for a typical design) — this is what lets the
+  small (roughly 3-8 for a typical design) - this is what lets the
   rendered diagram visually cluster related components together instead
   of scattering them.
 - Map each component to the requirement IDs that justify it.
@@ -172,7 +172,7 @@ DO NOT:
 - Create an interface whose source or target is an external dependency.
   A component's use of an external dependency (e.g. "Payment Service calls
   the Stripe API") is captured ONLY by listing the component's ID under
-  that dependency's "used_by_components" — never as an interface. Every
+  that dependency's "used_by_components" - never as an interface. Every
   interface's source_component and target_component must each be the ID
   of an item in "components"; an external dependency's ID is never valid
   there, in either direction.

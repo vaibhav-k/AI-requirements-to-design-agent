@@ -13,7 +13,7 @@ __all__ = ["ArchitectureValidationError", "ArchitectureValidator"]
 class ArchitectureValidator:
     """Validate the semantic integrity of a system architecture.
 
-    ``validate`` itself only assembles the error list and raises — each
+    ``validate`` itself only assembles the error list and raises - each
     individual rule lives in its own small, independently testable method
     below, rather than one long function with every check inlined. That
     keeps each method's own cognitive complexity low instead of just
@@ -178,7 +178,7 @@ class ArchitectureValidator:
     def _validate_requirement_ids(requirement_ids: set[str]) -> list[str]:
         # One message per blank/whitespace-only id in the set (matching the
         # original inline loop's behavior exactly) rather than deduping to a
-        # single message — `requirement_ids` is a set, so this can only
+        # single message - `requirement_ids` is a set, so this can only
         # repeat if more than one distinct blank-ish string (e.g. "" and
         # " ") is present.
         return [

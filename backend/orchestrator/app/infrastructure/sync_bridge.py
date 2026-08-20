@@ -1,7 +1,7 @@
 """Bridge an async application-layer call into a synchronous one.
 
 Every use case in ``app.application.use_cases`` exposes only an async
-``execute()`` — pure orchestration against an async port, no opinion on
+``execute()`` - pure orchestration against an async port, no opinion on
 how (or whether) a caller happens to be running on an event loop. Several
 callers aren't ``async`` themselves: the CLI (``app/main.py``), the MCP
 tool functions (``app/mcp/server.py``), and the sync FastAPI routes
@@ -27,7 +27,7 @@ def run_sync(coro: Coroutine[object, object, T], *, caller: str) -> T:
 
     Raises ``RuntimeError`` if called from inside a *running* event loop
     (i.e. from an ``async def`` function) instead of deadlocking or
-    crashing confusingly — ``asyncio.run`` cannot nest inside one; the
+    crashing confusingly - ``asyncio.run`` cannot nest inside one; the
     caller should await the coroutine directly instead.
     """
 
@@ -38,7 +38,7 @@ def run_sync(coro: Coroutine[object, object, T], *, caller: str) -> T:
     else:
         coro.close()
         raise RuntimeError(
-            f"{caller} cannot be called from a running event loop — "
+            f"{caller} cannot be called from a running event loop - "
             "await the underlying coroutine directly instead."
         )
 

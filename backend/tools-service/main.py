@@ -6,11 +6,11 @@ Run with:
 
 or, in production, the way the Dockerfile does it (see that file).
 
-This service is deliberately deterministic-only — no Azure OpenAI client
+This service is deliberately deterministic-only - no Azure OpenAI client
 exists anywhere in it, and none of its dependencies (``fastapi``,
 ``graphviz``, ``pydantic``) can reach the network on their own. It is
 reached only by ``backend/mcp-wrapper``, never directly by the frontend or
-by end users — see the root README's architecture section for the full
+by end users - see the root README's architecture section for the full
 request path (orchestrator -> mcp-wrapper -> tools-service).
 """
 
@@ -20,8 +20,10 @@ import logging
 
 import uvicorn
 from fastapi import FastAPI
+
 from src.api.routes.diagrams import router as diagrams_router
 from src.api.routes.validation import router as validation_router
+from src.api.routes.work_breakdown import router as work_breakdown_router
 from src.infrastructure.config import get_settings
 
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +36,7 @@ def create_app() -> FastAPI:
 
     app.include_router(diagrams_router)
     app.include_router(validation_router)
+    app.include_router(work_breakdown_router)
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str]:

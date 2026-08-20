@@ -4,24 +4,24 @@ Mirrors the CLI's ``DesignSession``/``ArchitectureSession`` loop
 (``app/main.py``) as stateless HTTP calls backed by
 :class:`~app.domain.session.SessionRecord`:
 
-* ``POST /requirements-runs``          — like the CLI's first ``analyze()`` call.
-* ``POST /requirements-runs/upload``   — same, but from an uploaded document
+* ``POST /requirements-runs``          - like the CLI's first ``analyze()`` call.
+* ``POST /requirements-runs/upload``   - same, but from an uploaded document
   (PDF/DOCX/PNG/JPG/JPEG/TXT) instead of typed text; see ``app/ingestion.py``.
-* ``GET  /requirements-runs``          — list the caller's own sessions.
-* ``GET  /requirements-runs/{id}``     — poll/resume a session.
-* ``POST /requirements-runs/{id}/refine``         — like choosing "2. Refine".
-* ``POST /requirements-runs/{id}/refine/upload``  — same, from an uploaded
+* ``GET  /requirements-runs``          - list the caller's own sessions.
+* ``GET  /requirements-runs/{id}``     - poll/resume a session.
+* ``POST /requirements-runs/{id}/refine``         - like choosing "2. Refine".
+* ``POST /requirements-runs/{id}/refine/upload``  - same, from an uploaded
   document.
-* ``POST /requirements-runs/{id}/accept``         — like choosing "1. Accept".
-* ``POST /requirements-runs/{id}/refine-architecture`` — refine an
+* ``POST /requirements-runs/{id}/accept``         - like choosing "1. Accept".
+* ``POST /requirements-runs/{id}/refine-architecture`` - refine an
   already-accepted architecture with new input; no CLI equivalent exists
   yet (the CLI's loop only refines requirements, not architecture).
-* ``POST /requirements-runs/{id}/approve`` — record an "approved" decision
+* ``POST /requirements-runs/{id}/approve`` - record an "approved" decision
   against the current architecture version.
-* ``POST /requirements-runs/{id}/reject`` — record a "rejected" decision
+* ``POST /requirements-runs/{id}/reject`` - record a "rejected" decision
   against the current architecture version; does not block further
   ``refine-architecture`` calls.
-* ``GET  /requirements-runs/{id}/source-file`` — download the original
+* ``GET  /requirements-runs/{id}/source-file`` - download the original
   uploaded file for the current requirements version, if any.
 
 Every route requires ``load_owned`` before touching a record, so one caller
@@ -31,7 +31,7 @@ can never read or mutate another caller's session (see ``app/api/ownership.py``)
 ``User``, accepting/refining an architecture needs ``Architect``,
 approving/rejecting needs ``Reviewer``, and every read route accepts any of
 the three plus ``Reviewer``. ``Admin`` passes every check and additionally
-bypasses ownership — see the README's "RBAC" section for the full matrix
+bypasses ownership - see the README's "RBAC" section for the full matrix
 and why (both checks are no-ops with ``AUTH_ENABLED=false``).
 """
 
@@ -79,8 +79,9 @@ from app.application.use_cases.interpret_diagram_image import (
 )
 from app.design.session import ArchitectureSession, DesignGenerationWorkflowError
 from app.domain.design import ApprovalDecision, SystemDesignArtifact
-from app.domain.requirements import RequirementsArtifact, StoredArtifact
+from app.domain.requirements import Requirement, RequirementsArtifact, StoredArtifact
 from app.domain.session import SessionRecord
+from app.domain.work_breakdown import WorkBreakdownArtifact
 from app.infrastructure.sync_bridge import run_sync
 from app.ingestion import (
     SUPPORTED_EXTENSIONS,
@@ -97,7 +98,7 @@ from app.security.auth import ROLE_ARCHITECT, ROLE_REVIEWER, ROLE_USER, require_
 router = APIRouter(prefix="/requirements-runs", tags=["requirements"])
 
 # Every read-only route accepts any of the three functional roles (plus
-# Admin, which `require_role` always lets through regardless — see
+# Admin, which `require_role` always lets through regardless - see
 # `app/security/auth.py`). Named once so "who can read" reads as a single
 # concept rather than the same three-role tuple typed out at every read
 # route's `Depends(require_role(...))`.
@@ -109,7 +110,7 @@ STAGE_REQUIREMENTS = "requirements"
 STAGE_GENERATING = "generating"
 STAGE_ARCHITECTURE = "architecture"
 
-# Approval decision states — see `SessionRecord.approval_status`.
+# Approval decision states - see `SessionRecord.approval_status`.
 APPROVAL_PENDING = "pending"
 APPROVAL_APPROVED = "approved"
 APPROVAL_REJECTED = "rejected"
@@ -135,6 +136,43 @@ class RenameRunRequest(BaseModel):
     name: str
 
 
+class ManualRequirementInput(BaseModel):
+    """One functional/non-functional requirement supplied by hand via
+    ``PUT /{session_id}/requirements`` - see that route's docstring.
+
+    Deliberately has no ``id`` field: IDs are always assigned by the route
+    itself (``FR-00N``/``NFR-00N``), never taken from the caller - see
+    ``_assign_requirement_ids``.
+    """
+
+    description: str
+    priority: str = "medium"
+    rationale: str | None = None
+
+
+class ManualRequirementsRequest(BaseModel):
+    """Body for ``PUT /{session_id}/requirements``.
+
+    Every field is optional and independently means "leave unchanged" when
+    omitted (``None``); an explicit empty list ``[]`` means "clear this
+    list." There is deliberately no ``actors``/``assumptions``/
+    ``open_questions`` field - this endpoint's whole purpose is unblocking
+    a work breakdown for a diagram-originated session, which only needs
+    functional/non-functional requirements (see
+    ``GenerateWorkBreakdownUseCase.execute``); the narrative fields here are
+    included only because a diagram-stub session otherwise has no
+    reasonable way to ever set them either.
+    """
+
+    business_goal: str | None = None
+    summary: str | None = None
+    functional_requirements: list[ManualRequirementInput] | None = None
+    non_functional_requirements: list[ManualRequirementInput] | None = None
+    data_requirements: list[str] | None = None
+    integration_requirements: list[str] | None = None
+    constraints: list[str] | None = None
+
+
 MAX_NAME_LENGTH = 200
 
 
@@ -142,10 +180,10 @@ class RequirementsRunView(BaseModel):
     session_id: str
     name: str | None
     owner_name: str | None
-    """Who started this session — only ever meaningful to the caller when
+    """Who started this session - only ever meaningful to the caller when
     it's someone *else* (an Admin browsing every session via ``list_all``,
     see ``list_runs``); for a non-Admin caller every session they can see is
-    already their own. Read-only here — only ``owner_fields``, at session
+    already their own. Read-only here - only ``owner_fields``, at session
     creation, ever sets it.
     """
     stage: str
@@ -158,6 +196,9 @@ class RequirementsRunView(BaseModel):
     diagram_blob: str | None
     approval_status: str
     approval_history: list[ApprovalDecision]
+    work_breakdown_version: int
+    work_breakdown: WorkBreakdownArtifact | None
+    work_breakdown_blob: str | None
     error: str | None
 
     @classmethod
@@ -176,6 +217,9 @@ class RequirementsRunView(BaseModel):
             diagram_blob=record.diagram_blob,
             approval_status=record.approval_status,
             approval_history=record.approval_history,
+            work_breakdown_version=record.work_breakdown_version,
+            work_breakdown=record.work_breakdown,
+            work_breakdown_blob=record.work_breakdown_blob,
             error=record.error,
         )
 
@@ -201,7 +245,7 @@ def _persist_requirements_blob(
 
 async def _read_upload_content(file: UploadFile) -> tuple[str, bytes]:
     """Validate an uploaded file's extension and non-emptiness, and return
-    its filename and raw bytes — the common first step for every upload
+    its filename and raw bytes - the common first step for every upload
     route, before either OCR extraction or (for an image) classification
     decides what to do with those bytes.
     """
@@ -231,7 +275,7 @@ def _extract_text_from_bytes(
     content: bytes,
     extractor: RequirementsDocumentExtractor,
 ) -> str:
-    """OCR/plain-text extraction from already-read upload bytes — split out
+    """OCR/plain-text extraction from already-read upload bytes - split out
     from :func:`_extract_text_from_upload` so the image-classification path
     below can reuse it without re-reading (and exhausting)
     ``UploadFile.read()`` a second time.
@@ -252,7 +296,7 @@ async def _extract_text_from_upload(
     Shared by the ``/upload`` start and refine routes for every supported
     extension *except* an image classified as a diagram (see
     ``_resolve_image_upload`` below, which every image upload goes through
-    instead) — a non-image upload always ends up here, and an image
+    instead) - a non-image upload always ends up here, and an image
     classified as a document screenshot ends up here too, just via
     ``_extract_text_from_bytes`` directly since its bytes were already read
     for classification.
@@ -271,7 +315,7 @@ async def _resolve_image_upload(
     notes: str | None,
 ) -> tuple[str, bytes, str, SystemDesignArtifact | None]:
     """Classify an uploaded image and resolve it into either extracted text
-    or a directly-interpreted design — see the module-level docstring's
+    or a directly-interpreted design - see the module-level docstring's
     reference to ``app.application.use_cases.classify_image``/
     ``interpret_diagram_image`` for why an image needs this extra step that
     a PDF/DOCX/TXT upload doesn't.
@@ -281,7 +325,7 @@ async def _resolve_image_upload(
     ``"document"`` screenshot returns its OCR'd text with ``design=None``
     (the caller proceeds through the same requirements pipeline as any
     other upload); a ``"diagram"`` returns ``text=""`` and the interpreted
-    ``SystemDesignArtifact`` (the caller jumps straight to architecture —
+    ``SystemDesignArtifact`` (the caller jumps straight to architecture -
     see ``_apply_diagram_to_record``).
     """
 
@@ -312,9 +356,9 @@ def _stub_requirements_from_diagram(
     came directly from an uploaded diagram image rather than typed or
     OCR'd requirements text.
 
-    Keeps ``RequirementsRunView.requirements`` non-null — so the
+    Keeps ``RequirementsRunView.requirements`` non-null - so the
     Requirements tab isn't blank and ``requirements_version``/
-    ``requirements_blob`` stay meaningful — without inventing functional
+    ``requirements_blob`` stay meaningful - without inventing functional
     requirements, actors, or constraints this project has no actual basis
     for; those lists stay empty rather than guessed at from the diagram.
     """
@@ -325,7 +369,7 @@ def _stub_requirements_from_diagram(
             f"typed requirements. {design.architecture_summary}"
         ),
         business_goal=(
-            "Not specified — this session started from a diagram upload "
+            "Not specified - this session started from a diagram upload "
             "instead of typed requirements."
         ),
         actors=[],
@@ -337,6 +381,56 @@ def _stub_requirements_from_diagram(
         assumptions=[],
         open_questions=[],
     )
+
+
+def _blank_requirements() -> RequirementsArtifact:
+    """An empty ``RequirementsArtifact`` with no narrative content - the
+    starting point for ``edit_requirements`` when ``record.requirements``
+    is still ``None`` (a session that was never analyzed, e.g. one created
+    some other way than the routes here). Same empty-lists shape as
+    ``_stub_requirements_from_diagram``, minus the diagram-specific
+    ``summary``/``business_goal`` text, since there's no ``design`` here to
+    describe.
+    """
+
+    return RequirementsArtifact(
+        summary="",
+        business_goal="",
+        actors=[],
+        functional_requirements=[],
+        non_functional_requirements=[],
+        data_requirements=[],
+        integration_requirements=[],
+        constraints=[],
+        assumptions=[],
+        open_questions=[],
+    )
+
+
+def _assign_requirement_ids(
+    items: list[ManualRequirementInput], prefix: str
+) -> list[Requirement]:
+    """Turn manually-entered requirement inputs into ``Requirement``s with
+    fresh, sequential IDs (``FR-001``, ``FR-002``, ... or ``NFR-001``,
+    ``NFR-002``, ...) - the same format
+    ``app/infrastructure/agents/requirements_agent.py``'s prompt asks the
+    AI analyzer to produce, so a manually-added requirement is
+    indistinguishable, downstream, from an AI-derived one.
+
+    Always renumbers from 1 rather than preserving any previous IDs - see
+    ``edit_requirements``'s docstring for the traceability caveat this
+    implies.
+    """
+
+    return [
+        Requirement(
+            id=f"{prefix}-{index:03d}",
+            description=item.description,
+            priority=item.priority,
+            rationale=item.rationale,
+        )
+        for index, item in enumerate(items, start=1)
+    ]
 
 
 def _apply_diagram_to_record(
@@ -353,12 +447,12 @@ def _apply_diagram_to_record(
     ``_stub_requirements_from_diagram``), persists the source file, then
     runs ``design`` through the exact same validate/render/persist pipeline
     ``accept_run``/``refine_architecture`` use
-    (``ArchitectureSession.generate_from_design`` — see
+    (``ArchitectureSession.generate_from_design`` - see
     ``app/design/session.py``), so an image-derived architecture is
     indistinguishable, downstream, from a text-derived one. Raises
     ``HTTPException`` (422) if validation/rendering fails, the same as
     those routes. The caller is responsible for ``store.create``/
-    ``_upsert_guarded`` afterward — this only touches the in-memory record.
+    ``_upsert_guarded`` afterward - this only touches the in-memory record.
     """
 
     record.source_filename = filename
@@ -419,9 +513,9 @@ def _upsert_guarded(store: SessionStorePort, record: SessionRecord) -> SessionRe
 
     Every call site here loaded ``record`` via ``load_owned``/``store.get()``
     first, so it carries the ETag of the version it read. If another
-    request wrote to this session in between — the remaining sliver of the
+    request wrote to this session in between - the remaining sliver of the
     double-submit race the ``"generating"`` stage alone doesn't close, see
-    ``accept_run`` — Cosmos rejects this write (``SessionConflictError``,
+    ``accept_run`` - Cosmos rejects this write (``SessionConflictError``,
     from a 412 response) instead of one request silently clobbering the
     other's change.
     """
@@ -458,7 +552,7 @@ def start_run(
 
     record.requirements_version = 1
     # Sync route (FastAPI runs it in a worker thread with no event loop of
-    # its own) calling this use case's async `execute` — see
+    # its own) calling this use case's async `execute` - see
     # `app/infrastructure/sync_bridge.py`. `start_run_from_upload` below is
     # `async def` already and awaits `execute` directly instead.
     record.requirements = run_sync(
@@ -502,11 +596,11 @@ async def start_run_from_upload(
     document screenshot proceeds through that same requirements pipeline
     (via ``_resolve_image_upload``, then unchanged from here on), while a
     system design/workflow diagram instead jumps this brand-new session
-    straight to :data:`STAGE_ARCHITECTURE` — see
+    straight to :data:`STAGE_ARCHITECTURE` - see
     ``_apply_diagram_to_record``.
 
     ``notes`` is an optional plain-text field the caller can send alongside
-    the file — e.g. "focus on the payments section" — appended to the
+    the file - e.g. "focus on the payments section" - appended to the
     extracted document text before analysis (or passed to the diagram
     interpreter as additional context), so a file upload doesn't preclude
     adding a short instruction of its own.
@@ -567,15 +661,15 @@ def list_runs(
     request: Request,
     store: Annotated[SessionStorePort, Depends(get_session_store)],
 ) -> list[RequirementsRunView]:
-    """The caller's own sessions, newest first — every session for an Admin.
+    """The caller's own sessions, newest first - every session for an Admin.
 
     With ``AUTH_ENABLED=false`` (or an anonymous, non-Admin caller),
-    ``owner_fields`` returns ``(None, None)`` — every session created
-    locally is unowned — so this always returns ``[]`` rather than every
+    ``owner_fields`` returns ``(None, None)`` - every session created
+    locally is unowned - so this always returns ``[]`` rather than every
     session anyone has ever started. That matches ``SessionStorePort
     .list_for_owner``'s own "unowned records are nobody's" behavior; it
     isn't a separate special case here. An Admin-role caller instead sees
-    every session regardless of owner (``list_all``) — "Admins can manage
+    every session regardless of owner (``list_all``) - "Admins can manage
     users and access across the system," see ``app/api/ownership.py``'s
     ``is_admin``.
     """
@@ -611,13 +705,13 @@ def rename_run(
     request: Request,
     store: Annotated[SessionStorePort, Depends(get_session_store)],
 ) -> RequirementsRunView:
-    """Set this session's display name — a label only.
+    """Set this session's display name - a label only.
 
     Open to any of the three functional roles (``Admin`` implicit), not
     gated to a single role the way ``accept``/``approve`` are: renaming
     doesn't advance the session's stage or touch its content, it's metadata
     about a session the caller already owns (or, for ``Admin``, any
-    session — see ``load_owned``/``app/api/ownership.py``), the same "any
+    session - see ``load_owned``/``app/api/ownership.py``), the same "any
     functional role can act on what they own" shape as the read routes.
     """
     record = load_owned(store, session_id, request)
@@ -634,6 +728,106 @@ def rename_run(
         )
 
     record.name = name
+    _upsert_guarded(store, record)
+    return RequirementsRunView.from_record(record)
+
+
+@router.put(
+    "/{session_id}/requirements",
+    dependencies=[Depends(require_role(ROLE_USER))],
+)
+def edit_requirements(
+    session_id: str,
+    body: ManualRequirementsRequest,
+    request: Request,
+    store: Annotated[SessionStorePort, Depends(get_session_store)],
+    artifact_store: Annotated[ArtifactStorePort, Depends(get_artifact_store)],
+) -> RequirementsRunView:
+    """Directly set/edit structured requirements fields by hand - no AI call.
+
+    Exists to unblock a session that started from an uploaded diagram
+    image: ``_apply_diagram_to_record``/``_stub_requirements_from_diagram``
+    deliberately leave ``functional_requirements``/
+    ``non_functional_requirements`` empty rather than invent requirements
+    the diagram didn't actually specify, but
+    ``GenerateWorkBreakdownUseCase.execute`` refuses to run without at
+    least one of either - leaving such a session permanently unable to
+    produce a work breakdown. This route lets a caller type those
+    requirements in directly. (An AI-inferred suggestion of requirements
+    from the diagram is a possible future enhancement - explicitly out of
+    scope here.)
+
+    Unlike ``refine_run``, this is not gated to :data:`STAGE_REQUIREMENTS`
+    - it works from any stage *except* the transient :data:`STAGE_GENERATING`
+    (the same window every other mutating route rejects, to avoid racing an
+    in-flight architecture/work-breakdown generation) - and it never
+    changes ``record.stage`` itself. Every field on the request body is
+    optional and independently means "leave unchanged" when omitted
+    (``None``); an explicit empty list clears that field. Providing
+    ``functional_requirements``/``non_functional_requirements`` replaces
+    the entire list and assigns fresh sequential IDs (``FR-001``, ``FR-002``,
+    .../``NFR-001``, ``NFR-002``, ...) - previous IDs are not preserved.
+
+    Caveat: if this session's architecture was already generated from the
+    *previous* set of requirement IDs, replacing those IDs here could in
+    principle orphan any traceability the design draws back to a specific
+    requirement ID. This is low-risk today because the primary use case -
+    a diagram-originated session - starts with zero requirement IDs for an
+    architecture to have traced to in the first place; a future caller
+    using this route to edit a normal *text*-derived session's requirements
+    after its architecture already exists should keep in mind that IDs are
+    not preserved across this call.
+    """
+    record = load_owned(store, session_id, request)
+
+    if record.stage == STAGE_GENERATING:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"This session is in stage {record.stage!r}; requirements "
+            "cannot be edited while a generation is in progress.",
+        )
+
+    artifact = record.requirements or _blank_requirements()
+    updates: dict[str, object] = {}
+
+    if body.business_goal is not None:
+        updates["business_goal"] = body.business_goal
+    if body.summary is not None:
+        updates["summary"] = body.summary
+    if body.functional_requirements is not None:
+        updates["functional_requirements"] = _assign_requirement_ids(
+            body.functional_requirements, "FR"
+        )
+    if body.non_functional_requirements is not None:
+        updates["non_functional_requirements"] = _assign_requirement_ids(
+            body.non_functional_requirements, "NFR"
+        )
+    if body.data_requirements is not None:
+        updates["data_requirements"] = body.data_requirements
+    if body.integration_requirements is not None:
+        updates["integration_requirements"] = body.integration_requirements
+    if body.constraints is not None:
+        updates["constraints"] = body.constraints
+
+    record.requirements = artifact.model_copy(update=updates)
+    record.requirements_version += 1
+    # This session's *first* manual edit of a diagram stub had no filename
+    # to begin with (it came from an image, not a document upload) - clear
+    # nothing else here. A normal text/document-derived session keeps its
+    # real `source_filename`/`source_file_blob`: a manual tweak on top of
+    # an uploaded document must not make it look like that upload never
+    # happened.
+    if record.source_filename is None:
+        record.source_file_blob = None
+    record.source_text = "[Manually edited requirements]"
+
+    record.requirements_blob = _persist_requirements_blob(
+        artifact_store,
+        record,
+        record.source_text,
+        source_filename=record.source_filename,
+    )
+
     _upsert_guarded(store, record)
     return RequirementsRunView.from_record(record)
 
@@ -661,12 +855,12 @@ def refine_run(
 
     record.requirements_version += 1
     record.source_text = body.input
-    # This version came from typed text, not a file — clear any filename
+    # This version came from typed text, not a file - clear any filename
     # left over from a previous version's upload so it isn't misread as
     # describing *this* version's source.
     record.source_filename = None
     record.source_file_blob = None
-    # Sync route — see `start_run`'s comment on `run_sync`.
+    # Sync route - see `start_run`'s comment on `run_sync`.
     record.requirements = run_sync(
         analyzer.execute(
             user_input=body.input,
@@ -704,7 +898,7 @@ async def refine_run_from_upload(
 
     Sibling of ``refine_run`` for the same multipart-vs-JSON-body reason as
     ``start_run_from_upload``. Still only possible while the session is in
-    :data:`STAGE_REQUIREMENTS` (same as a text-based refine) — a diagram
+    :data:`STAGE_REQUIREMENTS` (same as a text-based refine) - a diagram
     classified here moves the session directly to
     :data:`STAGE_ARCHITECTURE`, the same destination ``accept_run`` reaches
     from typed/OCR'd requirements, just skipping past the intermediate
@@ -791,7 +985,7 @@ def accept_run(
     # This upsert is conditional on the ETag `record` was loaded with (see
     # `_upsert_guarded`/`CosmosSessionStore.upsert`), so if two concurrent
     # accept calls both pass the stage check above, only the first writer
-    # here wins — the second gets a 409 instead of silently racing the first
+    # here wins - the second gets a 409 instead of silently racing the first
     # through generation against the same session.
     record.stage = STAGE_GENERATING
     _upsert_guarded(store, record)
@@ -808,7 +1002,7 @@ def accept_run(
         result = design_session.generate(record.requirements)
     except DesignGenerationWorkflowError as exc:
         # Revert to "requirements" (not left stuck on "generating") so the
-        # caller can retry accept — a failed generation must not permanently
+        # caller can retry accept - a failed generation must not permanently
         # lock the session.
         record.stage = STAGE_REQUIREMENTS
         record.error = str(exc)
@@ -820,7 +1014,7 @@ def accept_run(
     record.design = result.design
     record.design_blob = result.design_blob
     record.diagram_blob = result.diagram_blob
-    # A freshly generated architecture has never been reviewed — reset any
+    # A freshly generated architecture has never been reviewed - reset any
     # leftover status from a previous session state (there shouldn't be
     # one, since accept only runs from STAGE_REQUIREMENTS, but this keeps
     # the invariant "approval_status always describes design_version"
@@ -852,7 +1046,7 @@ def refine_architecture(
     (which only fires once, from ``STAGE_REQUIREMENTS``), this can be called
     repeatedly once a session has reached ``STAGE_ARCHITECTURE``, each call
     producing a new design version built on top of the previous one rather
-    than starting from scratch — see ``GenerateSystemDesignUseCase.execute``'s
+    than starting from scratch - see ``GenerateSystemDesignUseCase.execute``'s
     ``previous_design``/``refinement_input`` parameters.
     """
     record = load_owned(store, session_id, request)
@@ -894,7 +1088,7 @@ def refine_architecture(
     except DesignGenerationWorkflowError as exc:
         # Revert to "architecture" (the previous design is still valid and
         # still what's persisted) rather than leave the session stuck on
-        # "generating" — a failed refinement must not block retrying it, or
+        # "generating" - a failed refinement must not block retrying it, or
         # block viewing the architecture that already existed.
         record.stage = STAGE_ARCHITECTURE
         record.error = str(exc)
@@ -906,7 +1100,7 @@ def refine_architecture(
     record.design = result.design
     record.design_blob = result.design_blob
     record.diagram_blob = result.diagram_blob
-    # The design just changed — any prior approve/reject decision was made
+    # The design just changed - any prior approve/reject decision was made
     # against the *previous* design_version and must not be read as
     # covering this new one. approval_history is untouched: that decision
     # still happened and stays in the record.
@@ -973,8 +1167,8 @@ def approve_run(
     """Record an "approved" decision against the current architecture version.
 
     Valid only once a session has reached ``STAGE_ARCHITECTURE``. Can be
-    called again later — e.g. to re-approve after a `reject`, or simply to
-    record a second reviewer's sign-off — each call appends a new entry to
+    called again later - e.g. to re-approve after a `reject`, or simply to
+    record a second reviewer's sign-off - each call appends a new entry to
     ``approval_history`` rather than replacing the previous one.
     """
     record = load_owned(store, session_id, request)
@@ -996,7 +1190,7 @@ def reject_run(
     """Record a "rejected" decision against the current architecture version.
 
     Unlike a failed `accept`/`refine-architecture`, rejection is a human
-    judgment call, not a generation/validation failure — it doesn't touch
+    judgment call, not a generation/validation failure - it doesn't touch
     ``stage`` or the persisted design, and doesn't block further
     `refine-architecture` calls. The expected flow is reject → refine →
     re-`approve`, not reject → dead end.
@@ -1020,7 +1214,7 @@ def get_source_file(
     """Download the original uploaded file behind the current requirements version.
 
     404s if the current requirements version wasn't created from an
-    uploaded file (e.g. it came from typed text) — ``record.source_filename``
+    uploaded file (e.g. it came from typed text) - ``record.source_filename``
     is ``None`` in that case, so there's nothing to fetch.
     """
     record = load_owned(store, session_id, request)

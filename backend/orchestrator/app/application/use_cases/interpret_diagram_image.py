@@ -11,7 +11,7 @@ from app.domain.design import SystemDesignArtifact
 @dataclass(slots=True)
 class InterpretDiagramImageUseCase:
     """Thin orchestration wrapper around a ``DiagramImageInterpreterPort``
-    — the diagram-image analogue of ``GenerateSystemDesignUseCase``."""
+    - the diagram-image analogue of ``GenerateSystemDesignUseCase``."""
 
     agent: DiagramImageInterpreterPort
 

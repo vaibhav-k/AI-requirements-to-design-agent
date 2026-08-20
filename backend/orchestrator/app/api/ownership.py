@@ -2,7 +2,7 @@
 
 Synchronous to match this project's session store. Authentication
 (``require_user``) establishes *that* a caller is a valid user in the
-tenant; this adds *which sessions they may see* — a session is stamped
+tenant; this adds *which sessions they may see* - a session is stamped
 with the Entra ``oid`` of whoever started it, and every read is checked
 against the caller.
 
@@ -20,8 +20,8 @@ Ownership is skipped entirely when ``AUTH_ENABLED=false``, because there is
 no identity to attribute a session to.
 
 A caller holding the ``Admin`` App Role (see ``app/security/auth.py``'s
-RBAC section) bypasses ownership entirely — "Admins can manage users and
-access across the system" — so ``owns``/``load_owned`` return true for
+RBAC section) bypasses ownership entirely - "Admins can manage users and
+access across the system" - so ``owns``/``load_owned`` return true for
 *any* session for an Admin, not just their own. Every non-Admin role
 (User/Architect/Reviewer) still only ever sees what it owns; RBAC gates
 *which actions* a role may perform (see ``require_role`` in
@@ -65,7 +65,7 @@ def owner_fields(request: Request) -> tuple[str | None, str | None]:
 def is_admin(request: Request) -> bool:
     """Whether the caller holds the ``Admin`` App Role.
 
-    Only meaningful while ownership is enforced — with ``AUTH_ENABLED=false``
+    Only meaningful while ownership is enforced - with ``AUTH_ENABLED=false``
     there are no roles to check, and ownership is skipped entirely anyway
     (see ``ownership_enforced``), so this returns ``False`` in that mode
     rather than (redundantly, but confusingly) ``True``.
@@ -100,5 +100,5 @@ def require_owned(record: SessionRecord | None, request: Request) -> SessionReco
 def load_owned(
     store: SessionStorePort, session_id: str, request: Request
 ) -> SessionRecord:
-    """Fetch a record and authorise it in one step — the call every route uses."""
+    """Fetch a record and authorise it in one step - the call every route uses."""
     return require_owned(store.get(session_id), request)

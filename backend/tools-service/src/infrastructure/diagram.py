@@ -73,7 +73,7 @@ class _DiagramNode(NamedTuple):
 
 # Matches the `xlink:href="...png"` (or `href="...png"` on newer
 # SVG/Graphviz versions) that Graphviz writes for every node's
-# `image=...png` HTML-label attribute — see `_inline_local_images`.
+# `image=...png` HTML-label attribute - see `_inline_local_images`.
 _LOCAL_IMAGE_HREF_PATTERN = re.compile(r'((?:xlink:href|href))="([^"]+\.png)"')
 
 
@@ -81,7 +81,7 @@ class ArchitectureDiagramGenerator:
     """Generate a high-level architecture diagram as SVG.
 
     The concrete ``app.application.ports.DiagramRendererPort``
-    implementation — satisfied structurally via its ``generate`` method,
+    implementation - satisfied structurally via its ``generate`` method,
     no inheritance required. See that port's docstring for why this
     doesn't go through ``app.infrastructure.composition`` the way the
     agent adapters do.
@@ -91,7 +91,7 @@ class ArchitectureDiagramGenerator:
     related components stay visually together and most real edges stay
     short instead of arcing across the whole diagram. This replaced an
     earlier design that forced every component into one flat page-wide
-    grid — see git history / the "Image Input Classification" README
+    grid - see git history / the "Image Input Classification" README
     section's neighbor for why: on any design with more than a handful
     of components and interfaces, that flat grid produced a "hairball"
     of long, crossing edge splines, because every real edge was drawn
@@ -107,21 +107,21 @@ class ArchitectureDiagramGenerator:
 
     # Past this many total real edges (interfaces + dependency "used by"
     # edges combined), rendering every single one's name as inline label
-    # text turns into unreadable clutter — dozens of small text strings
+    # text turns into unreadable clutter - dozens of small text strings
     # scattered across the diagram. Full detail is still available via
     # each edge's `tooltip` (shown on hover, and already relied on by
     # the frontend's DiagramViewer), so above this threshold inline
     # labels are dropped entirely rather than made illegibly small.
     MAX_LABELED_EDGES = 24
 
-    # Domain shown for a component whose `domain` field is blank —
+    # Domain shown for a component whose `domain` field is blank -
     # keeps older/unclassified designs (and anything that constructs a
     # `DesignComponent` without a domain) rendering as a single grouped
     # cluster instead of erroring or silently omitting the field.
     DEFAULT_DOMAIN = "Other Components"
 
     # Side length, in points, of a node's icon image within its
-    # HTML-like label — see `_node_label`.
+    # HTML-like label - see `_node_label`.
     ICON_SIZE_PX = 56
 
     # Caption color for an external dependency node, set apart from a
@@ -139,8 +139,8 @@ class ArchitectureDiagramGenerator:
         # an already-complex layout into a small bounding box, which
         # stretches and bends edges into long arcs. The frontend's
         # DiagramViewer already supports zoom/pan, so letting Graphviz
-        # size the SVG naturally — as large as the actual content needs
-        # — produces straighter, more readable edges at the cost of not
+        # size the SVG naturally - as large as the actual content needs
+        # - produces straighter, more readable edges at the cost of not
         # fitting on one printed page unscaled.
         #
         # `rankdir="LR"` (left-to-right) rather than top-to-bottom,
@@ -157,18 +157,18 @@ class ArchitectureDiagramGenerator:
             nodesep="0.5",
             ranksep="0.9",
             # Right-angle, straight-segment edge routing instead of
-            # Graphviz's default curved splines — reads as far less
+            # Graphviz's default curved splines - reads as far less
             # "haphazard" for a boxes-and-arrows architecture diagram,
             # and was stress-tested at the same scales as the clustering
             # change above (up to 200 components / 300 interfaces)
             # without reproducing the `dot` crash discussed on
             # `_lay_out_column`. Edge label text moves to `xlabel`
-            # instead of `label` to match — `dot` warns that plain
+            # instead of `label` to match - `dot` warns that plain
             # `label` isn't positioned correctly on orthogonal edges.
             splines="ortho",
         )
 
-        # `shape="none"` — every node supplies its own HTML-like label
+        # `shape="none"` - every node supplies its own HTML-like label
         # (see `_node_label`), which lays out the icon and caption
         # itself; a `box`/`filled` default here would just draw an
         # unused outline behind it.
@@ -227,7 +227,7 @@ class ArchitectureDiagramGenerator:
         URI.
 
         Graphviz's SVG output references an icon by the exact filesystem
-        path passed to its `IMG SRC=...` HTML-label attribute — fine for
+        path passed to its `IMG SRC=...` HTML-label attribute - fine for
         a `dot`-produced file sitting next to that path, but this SVG is
         persisted as a Blob artifact and later rendered directly in a
         browser (`DiagramViewer.tsx`), which has no access to this
@@ -247,7 +247,7 @@ class ArchitectureDiagramGenerator:
     @staticmethod
     def _escape_html(text: str) -> str:
         """Escape the handful of characters that are structurally
-        significant inside a Graphviz HTML-like label — see
+        significant inside a Graphviz HTML-like label - see
         `_node_label`. Component/dependency names and ids are free text
         (LLM- or user-supplied), so an unescaped `<`, `>`, or `&` would
         otherwise corrupt the label's HTML structure."""
@@ -265,7 +265,7 @@ class ArchitectureDiagramGenerator:
         installed Graphviz build (2.43.0): the label text renders
         overlapping the image's own area instead of below it, regardless
         of `labelloc`. An HTML-like label with the image and caption in
-        stacked table rows lays out exactly as expected — confirmed
+        stacked table rows lays out exactly as expected - confirmed
         visually against the alternative before choosing this approach.
         """
 
@@ -294,27 +294,27 @@ class ArchitectureDiagramGenerator:
         top-to-bottom column, in `nodes`' order.
 
         Consecutive nodes are chained with an invisible, unlabeled,
-        heavily-weighted edge — a normal *directed* edge, contributing a
+        heavily-weighted edge - a normal *directed* edge, contributing a
         real (if fake) rank-ordering constraint, NOT a `rank=same`
         ("flat"/same-rank) edge. That distinction matters a lot here: an
         earlier version of this method instead wrapped items into a grid
         using nested `rank=same` subgraphs (to bound a domain's width
         instead of letting it grow as one tall column), one per row,
-        inside the domain's `cluster_*`-named subgraph. That combination —
+        inside the domain's `cluster_*`-named subgraph. That combination -
         `rank=same` nested inside a Graphviz cluster, on a graph with
-        enough real edges crossing between clusters — reliably crashes the
+        enough real edges crossing between clusters - reliably crashes the
         installed Graphviz `dot` build (2.43.0) with
         `class2.c:148: merge_chain: Assertion 'ED_to_virt(e) == NULL'
         failed`, confirmed via local reproduction at roughly 40+
-        components / 60+ interfaces spread across several domains — well
+        components / 60+ interfaces spread across several domains - well
         within what a real generated architecture can reach. Directed
         (non-flat) invisible edges inside a cluster, at the same or
-        greater scale, do not trigger it — including with `rankdir="LR"`
+        greater scale, do not trigger it - including with `rankdir="LR"`
         (this now lays out left-to-right, not top-to-bottom; re-verified
         against the same stress scale after that change).
 
         The column layout this settles on isn't just the safe fallback,
-        though — it's also a closer match to how domains are drawn in a
+        though - it's also a closer match to how domains are drawn in a
         typical reference architecture diagram (a labeled section
         containing a stack of its components) than the wrapped grid was,
         so nothing about the visual result is a downgrade for it.
@@ -345,7 +345,7 @@ class ArchitectureDiagramGenerator:
         components: list[DesignComponent],
     ) -> dict[str, list[DesignComponent]]:
         """Bucket `components` by domain, preserving each domain's first
-        appearance order (Python dicts preserve insertion order) — so
+        appearance order (Python dicts preserve insertion order) - so
         clusters render in roughly the order the design introduced them,
         rather than an arbitrary or alphabetical order."""
 
@@ -364,12 +364,12 @@ class ArchitectureDiagramGenerator:
         design: SystemDesignArtifact,
     ) -> dict[str, str]:
         # Caption text is deliberately just "{id}\n{name}" (e.g.
-        # "C-001\nUser Interaction Component") — the full responsibility
+        # "C-001\nUser Interaction Component") - the full responsibility
         # stays out of it (it's already in the Requirements/Architecture
         # text panel in the UI) and is attached as a `tooltip`, which
         # Graphviz renders as an `xlink:title` on the node's link
         # element, shown on hover, without touching the node's own
-        # `<title>` (still just the component id — the frontend's
+        # `<title>` (still just the component id - the frontend's
         # click-to-inspect in DiagramViewer.tsx depends on that staying
         # exactly the id).
         #
@@ -399,7 +399,7 @@ class ArchitectureDiagramGenerator:
             with graph.subgraph(name=f"cluster_domain_{index}") as cluster:
                 cluster.attr(
                     label=domain,
-                    # Dashed, Azure-blue boundary — the same visual
+                    # Dashed, Azure-blue boundary - the same visual
                     # convention a typical Azure reference architecture
                     # diagram uses for a virtual network or other logical
                     # boundary grouping a set of resources.
@@ -432,7 +432,7 @@ class ArchitectureDiagramGenerator:
             for dependency in design.external_dependencies
         ]
 
-        # Dependencies aren't grouped per-domain — a single dependency is
+        # Dependencies aren't grouped per-domain - a single dependency is
         # often used by components across several domains (see
         # `used_by_components`), so it has no one natural "home" domain.
         # They still get their own cluster, both to visually set them
@@ -510,7 +510,7 @@ class ArchitectureDiagramGenerator:
                     # edges influence rank assignment would pull a
                     # dependency's rank toward whichever component
                     # happened to be laid out last among potentially
-                    # several unrelated domains — kept `False`, as before.
+                    # several unrelated domains - kept `False`, as before.
                     constraint="false",
                 )
 
@@ -531,7 +531,7 @@ class ArchitectureDiagramGenerator:
         ``target``, optionally with a name shown along the way.
 
         An earlier version of this attached the name as an edge
-        `xlabel` — Graphviz's own auto-placed "exterior label", positioned
+        `xlabel` - Graphviz's own auto-placed "exterior label", positioned
         near the edge without reserving any layout space for it. That
         produced two real, user-reported defects on non-trivial diagrams:
         an xlabel rendering directly on top of a neighboring node's
@@ -539,10 +539,10 @@ class ArchitectureDiagramGenerator:
         from the edge it named. Graphviz's `forcelabels="false"` escape
         hatch (drop a label instead of overlapping) was tried and
         rejected: with `rankdir="LR"` (required for this diagram's
-        left-to-right flow — see `_create_graph`), the installed
+        left-to-right flow - see `_create_graph`), the installed
         `dot` (Graphviz 2.42/2.43) drops *every* exterior label, even in
         a trivial two-node, one-edge diagram with the entire canvas
-        empty — a real layout-engine limitation, not a spacing problem
+        empty - a real layout-engine limitation, not a spacing problem
         (confirmed empirically: increasing `nodesep`/`ranksep` had no
         effect).
 
@@ -550,10 +550,10 @@ class ArchitectureDiagramGenerator:
         into two: `source -> label node -> target`, where the label node
         is a borderless, fill-less `shape="plaintext"` node whose only
         content is the name. Splitting the edge like this means the
-        label is a first-class node in Graphviz's own layout — `dot`
+        label is a first-class node in Graphviz's own layout - `dot`
         reserves real rank/column space for it and guarantees no other
         node overlaps it, exactly the same overlap-avoidance every
-        component/dependency icon node already gets — while still
+        component/dependency icon node already gets - while still
         visibly sitting *on* the connecting line (it has a real inbound
         and outbound edge segment), which reads unambiguously as "this
         interface's name" rather than a floating annotation. `tooltip`
@@ -561,7 +561,7 @@ class ArchitectureDiagramGenerator:
         either the label or the line shows the full description
         regardless of which part the pointer happens to be over.
 
-        When there's no name to show (label text is blank — either this
+        When there's no name to show (label text is blank - either this
         specific edge never had one, or `_create_graph`'s caller
         suppressed all inline labels past `MAX_LABELED_EDGES`), this
         draws a single plain edge exactly as before, unchanged.

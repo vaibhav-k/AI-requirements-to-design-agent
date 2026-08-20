@@ -9,7 +9,7 @@ from app.config import Settings
 from app.web.main import create_app
 
 # Every test above constructs TestClient(app) and calls .get() directly,
-# which — deliberately, so none of them need real Entra ID credentials —
+# which - deliberately, so none of them need real Entra ID credentials -
 # never runs the app's `lifespan` (startup/shutdown only fire when
 # TestClient is used as a context manager: `with TestClient(app) as c:`).
 # That's exactly why the "sync CosmosClient has no close()" bug shipped
@@ -23,8 +23,8 @@ def make_app(**settings_overrides: object) -> TestClient:
         app = create_app()
     # /me, require_user, and now whoami's own auth_enabled check all call
     # get_settings() again at request time (each module imports its own
-    # bound name — see app/api/ownership.py's docstring on the same
-    # pattern) — patch every one of them for the lifetime of the returned
+    # bound name - see app/api/ownership.py's docstring on the same
+    # pattern) - patch every one of them for the lifetime of the returned
     # client too.
     patchers = [
         patch("app.security.auth.get_settings", return_value=settings),
@@ -38,7 +38,7 @@ def make_app(**settings_overrides: object) -> TestClient:
 
 
 class _StopAll:
-    """Stops every patcher in ``patchers`` — lets call sites keep the
+    """Stops every patcher in ``patchers`` - lets call sites keep the
     existing ``client._settings_patcher.stop()`` one-liner even though
     ``make_app`` now patches ``get_settings`` in more than one module."""
 
@@ -68,7 +68,7 @@ def test_me_returns_anonymous_when_auth_disabled() -> None:
         body = response.json()
         assert body["authenticated"] is False
         assert body["principal"] == "anonymous"
-        # Every role, not empty — with auth disabled every `require_role`
+        # Every role, not empty - with auth disabled every `require_role`
         # check passes regardless of role, so this reports what the caller
         # can actually do, not a literal (and misleading) empty claim.
         assert set(body["roles"]) == {"Admin", "Architect", "Reviewer", "User"}
@@ -151,7 +151,7 @@ def test_lifespan_still_closes_artifact_store_when_session_store_close_fails(
     mock_artifact_store_cls: object,
 ) -> None:
     """One store failing to close must not stop the other from closing, and
-    must not turn a normal shutdown into an unhandled exception — see the
+    must not turn a normal shutdown into an unhandled exception - see the
     `for name, close in (...)` loop in `lifespan`."""
     mock_session_store_cls.return_value.close.side_effect = RuntimeError(  # type: ignore[attr-defined]
         "boom"

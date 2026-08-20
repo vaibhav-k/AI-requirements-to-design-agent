@@ -75,7 +75,7 @@ def test_close_closes_the_underlying_blob_service_client(
 
     Uses ``spec=BlobServiceClient`` (via autospec on the class) so that if
     ``close()`` ever called something the real SDK doesn't expose, the test
-    would fail the same way the real client would — see the equivalent
+    would fail the same way the real client would - see the equivalent
     regression test in test_session_store.py for why that distinction
     matters (a plain MagicMock would accept any call silently).
     """

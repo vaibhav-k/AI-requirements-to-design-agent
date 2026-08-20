@@ -40,7 +40,7 @@ def test_refinement_passes_previous_artifact() -> None:
     refined_artifact = create_artifact("Refined analysis.")
 
     # `DesignSession.analyze` bridges into this use case's async `execute`
-    # via `run_sync` (see app/infrastructure/sync_bridge.py) — an `AsyncMock`
+    # via `run_sync` (see app/infrastructure/sync_bridge.py) - an `AsyncMock`
     # here stands in for the coroutine that bridge awaits.
     analyzer.execute = AsyncMock(
         side_effect=[

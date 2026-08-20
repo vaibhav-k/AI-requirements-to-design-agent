@@ -3,7 +3,7 @@
 The PNG files in this directory are Microsoft's official Azure
 Architecture Icons, sourced from the `diagrams` Python package's bundled
 icon resources (https://pypi.org/project/diagrams/,
-`resources/azure/...` inside the installed package — the package itself
+`resources/azure/...` inside the installed package - the package itself
 is MIT-licensed; the icon assets are Microsoft's, made available for
 building architecture diagrams like the ones this project generates).
 
@@ -40,5 +40,5 @@ depend on any single upstream package's internal file layout:
 
 If Microsoft's official icon set is updated, or a different/newer
 source is preferred, these files can be swapped out individually as
-long as the slug (filename) stays the same — `app/design/icons.py`
+long as the slug (filename) stays the same - `app/design/icons.py`
 doesn't know or care where a given slug's PNG originally came from.

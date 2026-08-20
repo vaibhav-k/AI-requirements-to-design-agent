@@ -18,7 +18,7 @@ def test_run_sync_returns_the_coroutines_result() -> None:
 
 
 def test_run_sync_raises_when_called_from_a_running_event_loop() -> None:
-    """The whole point of ``run_sync`` — the guard the old facade classes
+    """The whole point of ``run_sync`` - the guard the old facade classes
     (``app/analyzer.py``, ``app/design/analyzer.py``, ``app/vision.py``)
     each duplicated so ``asyncio.run()`` never nests inside a caller's own
     running event loop, which raises a much more confusing error."""
@@ -28,3 +28,4 @@ def test_run_sync_raises_when_called_from_a_running_event_loop() -> None:
 
     with pytest.raises(RuntimeError, match="running event loop"):
         asyncio.run(call_from_running_loop())
+

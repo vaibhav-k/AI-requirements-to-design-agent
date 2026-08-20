@@ -26,8 +26,8 @@ interface UseVersionedArtifactResult<T> {
 
 /** Version history + "currently viewing" + "comparing against" state for
  * one artifact type (requirements or architecture) of one session. Fetches
- * only what's actually persisted — never fabricates a version or its
- * content — via the `listVersions`/`getVersion` callbacks the caller
+ * only what's actually persisted - never fabricates a version or its
+ * content - via the `listVersions`/`getVersion` callbacks the caller
  * supplies (typically `api.listRequirementsVersions`/`api.getRequirementsVersion`,
  * or the architecture equivalents).
  *
@@ -74,7 +74,7 @@ export function useVersionedArtifact<T>({
     }
     // `listVersions` is one of useRequirementsApi's memoized methods (see
     // api.ts), so its identity is stable across renders unless the
-    // underlying MSAL account changes — safe to list here without causing
+    // underlying MSAL account changes - safe to list here without causing
     // an extra re-list loop.
   }, [sessionId, refreshKey, listVersions])
 

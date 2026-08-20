@@ -3,12 +3,12 @@
 See ``app/vision.py``'s module docstring for the wider story this
 belongs to: an uploaded image is either a screenshot of text (handled by
 the normal requirements/OCR pipeline) or a system design/workflow
-diagram (interpreted directly into a ``SystemDesignArtifact`` — see
-``app.domain.design`` — via
+diagram (interpreted directly into a ``SystemDesignArtifact`` - see
+``app.domain.design`` - via
 ``app.application.ports.DiagramImageInterpreterPort``).
 
 Moved here, verbatim, from ``app/vision.py`` as part of the Clean
-Architecture migration (see README -> "Clean Architecture Migration") —
+Architecture migration (see README -> "Clean Architecture Migration") -
 the same "pure entity, zero I/O" home ``app.domain.requirements`` already
 gives ``Requirement``/``RequirementsArtifact``/etc.
 """
@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 
 class ImageClassification(BaseModel):
-    """Result of classifying an uploaded image — see the module docstring."""
+    """Result of classifying an uploaded image - see the module docstring."""
 
     kind: Literal["document", "diagram"]
     reasoning: str = Field(

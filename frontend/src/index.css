@@ -11,6 +11,13 @@
   --error-bg: rgba(192, 57, 43, 0.1);
   --success: #1e8e5a;
   --success-bg: rgba(30, 142, 90, 0.1);
+  /* var(--success) on var(--success-bg) is ~3.6:1 in light mode - enough
+   * for a large-text/UI-component use (the Approve button's solid text)
+   * but not the ~4.5:1 small text needs. Small text on this tint (the
+   * diff-tag labels) uses this darker shade instead; dark mode's
+   * var(--success) already clears 4.5:1 against var(--success-bg) on its
+   * own (see the media query below), so this just mirrors it there. */
+  --success-text-small: #166534;
 
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, Consolas, monospace;
@@ -39,6 +46,7 @@
     --error-bg: rgba(255, 138, 117, 0.12);
     --success: #4ade80;
     --success-bg: rgba(74, 222, 128, 0.12);
+    --success-text-small: #4ade80;
   }
 }
 

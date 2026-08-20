@@ -1,6 +1,6 @@
 import { useRef, useState } from "react"
 
-// Mirrors app/ingestion.py's SUPPORTED_EXTENSIONS — kept in sync by hand
+// Mirrors app/ingestion.py's SUPPORTED_EXTENSIONS - kept in sync by hand
 // (see that module's docstring for why these formats specifically).
 const SUPPORTED_UPLOAD_EXTENSIONS = [
   ".txt",
@@ -21,88 +21,101 @@ export interface TranscriptEntry {
 export type ConversationStatus = "idle" | "loading" | "processing" | "ready" | "error"
 
 interface ConversationProps {
-  transcript: TranscriptEntry[]
-  status: ConversationStatus
-  statusLabel: string
-  onSend: (input: string) => void
+  readonly transcript: TranscriptEntry[]
+  readonly status: ConversationStatus
+  readonly statusLabel: string
+  readonly onSend: (input: string) => void
   /** Whether the signed-in caller's App Role permits whatever "Send" would
    * currently do (create/refine requirements, or refine an architecture
-   * once `stage === "architecture"` — see Workspace.tsx's `sendPermission`).
-   * `false` greys the button out rather than hiding it — unlike
+   * once `stage === "architecture"` - see Workspace.tsx's `sendPermission`).
+   * `false` greys the button out rather than hiding it - unlike
    * `canUploadFile`/`canAccept`/`canApprove` below, which govern whether
    * the action is *applicable* at this stage, this governs whether *this
    * caller* is allowed to do it; see permissions.ts. */
-  sendAllowed: boolean
-  /** Tooltip shown on the disabled Send button when `!sendAllowed` — e.g.
+  readonly sendAllowed: boolean
+  /** Tooltip shown on the disabled Send button when `!sendAllowed` - e.g.
    * "Requires the Architect role." */
-  sendDisabledReason?: string
+  readonly sendDisabledReason?: string
   /** Upload a document (PDF/DOCX/PNG/JPG/JPEG/TXT) to be scanned for
-   * requirements instead of typing them — see `app/ingestion.py`. Any text
+   * requirements instead of typing them - see `app/ingestion.py`. Any text
    * currently in the textarea is passed through as `notes`, appended to the
    * extracted document text (see `start_run_from_upload`/
    * `refine_run_from_upload` in app/api/routes/requirements.py). Only
    * offered while `canUploadFile` is true. */
-  onSendFile: (file: File, notes?: string) => void
-  /** Whether the file-upload control should be shown at all — true only
+  readonly onSendFile: (file: File, notes?: string) => void
+  /** Whether the file-upload control should be shown at all - true only
    * while the session is still in the requirements stage (or hasn't
    * started yet), matching the backend's `/upload` routes, which 409 once
    * a session has moved past `STAGE_REQUIREMENTS`. */
-  canUploadFile: boolean
+  readonly canUploadFile: boolean
   /** Whether requirements already exist for this session (`hasRequirements`
-   * in Workspace.tsx) — purely a label/copy decision, not a permissions
+   * in Workspace.tsx) - purely a label/copy decision, not a permissions
    * gate: it's what tells this component whether "Scan a file" would call
    * `start_run_from_upload` (no requirements yet) or `refine_run_from_upload`
-   * (there are some already, and the file's content is merged into them —
+   * (there are some already, and the file's content is merged into them -
    * see that route's docstring). Without this, the same "Scan a file"
    * button re-appearing after an initial submission reads as a leftover
    * control rather than the deliberate "scan another file to refine"
    * action it actually is. */
-  hasRequirements: boolean
+  readonly hasRequirements: boolean
   /** Same "grey out, don't hide" role gate as `sendAllowed`, for the
    * `User` role the `/upload` routes require. */
-  uploadAllowed: boolean
-  uploadDisabledReason?: string
-  onAccept: () => void
-  /** Whether "Accept & generate architecture" should be offered at all —
+  readonly uploadAllowed: boolean
+  readonly uploadDisabledReason?: string
+  readonly onAccept: () => void
+  /** Whether "Accept & generate architecture" should be offered at all -
    * only true once there are requirements to accept and the session hasn't
    * already moved past the requirements stage. */
-  canAccept: boolean
-  acceptLabel: string
+  readonly canAccept: boolean
+  readonly acceptLabel: string
   /** Same "grey out, don't hide" role gate as `sendAllowed`, for the
    * `Architect` role `POST .../accept` requires. */
-  acceptAllowed: boolean
-  acceptDisabledReason?: string
-  onApprove: () => void
-  onReject: () => void
-  /** Whether Approve/Reject should be offered at all — true once the
+  readonly acceptAllowed: boolean
+  readonly acceptDisabledReason?: string
+  readonly onApprove: () => void
+  readonly onReject: () => void
+  /** Whether Approve/Reject should be offered at all - true once the
    * session has an architecture to render a decision on (`stage ===
    * "architecture"`), regardless of the current `approvalStatus`: a
    * decision can always be revisited (re-approve after reject, or record
    * a second reviewer's sign-off), see `approve_run`/`reject_run` in
    * app/api/routes/requirements.py. */
-  canApprove: boolean
+  readonly canApprove: boolean
   /** Same "grey out, don't hide" role gate as `sendAllowed`, for the
    * `Reviewer` role `POST .../approve`/`.../reject` require. */
-  decisionAllowed: boolean
-  decisionDisabledReason?: string
-  /** "pending" | "approved" | "rejected" — the session's current decision,
+  readonly decisionAllowed: boolean
+  readonly decisionDisabledReason?: string
+  readonly onGenerateBreakdown: () => void
+  /** Whether "Generate work breakdown" should be offered at all - only
+   * true once the architecture has been approved and no breakdown exists
+   * yet for this session, mirroring `canAccept`'s "only offer once it's
+   * possible" shape one stage later (see
+   * `app/api/routes/work_breakdown.py`'s `generate_work_breakdown`, which
+   * 409s otherwise). */
+  readonly canGenerateBreakdown: boolean
+  readonly generateBreakdownLabel: string
+  /** Same "grey out, don't hide" role gate as `acceptAllowed`, for the
+   * `Architect` role `POST .../work-breakdown` requires. */
+  readonly generateBreakdownAllowed: boolean
+  readonly generateBreakdownDisabledReason?: string
+  /** "pending" | "approved" | "rejected" - the session's current decision,
    * shown as a badge next to the buttons. Only meaningful when
    * `canApprove` is true. */
-  approvalStatus: string
-  /** Whether the input/buttons should be interactive right now — false
+  readonly approvalStatus: string
+  /** Whether the input/buttons should be interactive right now - false
    * while loading the initial session or while a request is in flight. */
-  canSend: boolean
-  placeholder: string
+  readonly canSend: boolean
+  readonly placeholder: string
   /** The filename behind the current requirements version, if it came from
    * an uploaded file rather than typed text (`RequirementsRunView.source_filename`).
    * `null`/`undefined` shows nothing. */
-  sourceFilename?: string | null
+  readonly sourceFilename?: string | null
 }
 
 /** The AI interaction layer: a chat transcript over the *current* artifact,
  * not a generator in its own right. Every entry here reflects something the
  * backend actually did (started a session, refined it, accepted it, or
- * rejected the request) — nothing here is fabricated conversational filler. */
+ * rejected the request) - nothing here is fabricated conversational filler. */
 export function Conversation({
   transcript,
   status,
@@ -125,6 +138,11 @@ export function Conversation({
   canApprove,
   decisionAllowed,
   decisionDisabledReason,
+  onGenerateBreakdown,
+  canGenerateBreakdown,
+  generateBreakdownLabel,
+  generateBreakdownAllowed,
+  generateBreakdownDisabledReason,
   approvalStatus,
   canSend,
   placeholder,
@@ -133,7 +151,7 @@ export function Conversation({
   const [input, setInput] = useState("")
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const handleSubmit = (event: React.FormEvent) => {
+  const handleSubmit = (event: React.SubmitEvent) => {
     event.preventDefault()
     if (!input.trim() || !canSend) return
     onSend(input.trim())
@@ -149,6 +167,11 @@ export function Conversation({
     onSendFile(file, input.trim() || undefined)
     setInput("")
   }
+
+  const scanFileTitle = hasRequirements
+    ? `Scan another file (${SUPPORTED_UPLOAD_EXTENSIONS.join(", ")}) - its content is merged into the current requirements, same as typing a refinement. An image is auto-detected as a document screenshot (merged as text) or a system design diagram (redrawn as an architecture directly)`
+    : `Scan a file (${SUPPORTED_UPLOAD_EXTENSIONS.join(", ")}) instead of typing your requirements. An image is auto-detected as a document screenshot (processed as text) or a system design diagram (redrawn as an architecture directly)`
+  const uploadButtonTitle = uploadAllowed ? scanFileTitle : uploadDisabledReason
 
   return (
     <div className="conversation">
@@ -197,6 +220,7 @@ export function Conversation({
         <div className="button-row">
           <button
             type="submit"
+            className="button-sm"
             disabled={!canSend || !input.trim() || !sendAllowed}
             title={!sendAllowed ? sendDisabledReason : undefined}
           >
@@ -217,13 +241,7 @@ export function Conversation({
                 className="upload-button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={!canSend || !uploadAllowed}
-                title={
-                  !uploadAllowed
-                    ? uploadDisabledReason
-                    : hasRequirements
-                      ? `Scan another file (${SUPPORTED_UPLOAD_EXTENSIONS.join(", ")}) — its content is merged into the current requirements, same as typing a refinement. An image is auto-detected as a document screenshot (merged as text) or a system design diagram (redrawn as an architecture directly)`
-                      : `Scan a file (${SUPPORTED_UPLOAD_EXTENSIONS.join(", ")}) instead of typing your requirements. An image is auto-detected as a document screenshot (processed as text) or a system design diagram (redrawn as an architecture directly)`
-                }
+                title={uploadButtonTitle}
               >
                 {hasRequirements ? "Scan another file" : "Scan a file"}
               </button>
@@ -243,7 +261,7 @@ export function Conversation({
             <>
               <button
                 type="button"
-                className="approve-button"
+                className="approve-button button-sm"
                 onClick={onApprove}
                 disabled={!canSend || approvalStatus === "approved" || !decisionAllowed}
                 title={!decisionAllowed ? decisionDisabledReason : undefined}
@@ -252,7 +270,7 @@ export function Conversation({
               </button>
               <button
                 type="button"
-                className="reject-button"
+                className="reject-button button-sm"
                 onClick={onReject}
                 disabled={!canSend || approvalStatus === "rejected" || !decisionAllowed}
                 title={!decisionAllowed ? decisionDisabledReason : undefined}
@@ -261,12 +279,22 @@ export function Conversation({
               </button>
             </>
           )}
+          {canGenerateBreakdown && (
+            <button
+              type="button"
+              onClick={onGenerateBreakdown}
+              disabled={!canSend || !generateBreakdownAllowed}
+              title={!generateBreakdownAllowed ? generateBreakdownDisabledReason : undefined}
+            >
+              {generateBreakdownLabel}
+            </button>
+          )}
         </div>
         {canUploadFile && (
           <p className="muted upload-hint">
             Supported file types: {SUPPORTED_UPLOAD_EXTENSIONS.join(", ")}
             {hasRequirements &&
-              " — scanning another file merges it into the current requirements, the same as typing a refinement above."}
+              " - scanning another file merges it into the current requirements, the same as typing a refinement above."}
           </p>
         )}
       </form>

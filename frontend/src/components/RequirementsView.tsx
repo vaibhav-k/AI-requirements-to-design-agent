@@ -55,7 +55,7 @@ export function RequirementsView({ data, compareData }: RequirementsViewProps) {
           emptyLabel="No actors."
           renderItem={(actor) => (
             <>
-              <strong>{actor.name}</strong> — {actor.description}
+              <strong>{actor.name}</strong> - {actor.description}
             </>
           )}
         />
@@ -63,7 +63,7 @@ export function RequirementsView({ data, compareData }: RequirementsViewProps) {
         <ul>
           {data.actors.map((actor) => (
             <li key={actor.name}>
-              <strong>{actor.name}</strong> — {actor.description}
+              <strong>{actor.name}</strong> - {actor.description}
             </li>
           ))}
         </ul>

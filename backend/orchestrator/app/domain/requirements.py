@@ -1,4 +1,4 @@
-"""Requirements bounded context — domain entities and value objects.
+"""Requirements bounded context - domain entities and value objects.
 
 Moved verbatim from ``app/models.py`` as the first slice of the Clean
 Architecture migration (see README). ``app/models.py`` used to
@@ -10,7 +10,7 @@ importer migrated to ``app.domain.requirements`` directly (see README ->
 
 Nothing in this module performs I/O or imports anything from
 ``app.application``, ``app.infrastructure``, ``app.api``, ``app.web``,
-or ``app.mcp`` — see ``app/domain/__init__.py`` for why.
+or ``app.mcp`` - see ``app/domain/__init__.py`` for why.
 """
 
 from __future__ import annotations
@@ -85,6 +85,6 @@ class StoredArtifact(BaseModel):
 
     ``None`` for typed-text input (see ``app/ingestion.py``). When set, the
     original file bytes are persisted separately via
-    ``ArtifactStore.save_source_file`` — this field is just the pointer
+    ``ArtifactStore.save_source_file`` - this field is just the pointer
     back to "was there a file, and what was it called."
     """

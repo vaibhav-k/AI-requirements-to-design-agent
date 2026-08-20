@@ -20,8 +20,8 @@ Requires, from your ``.env`` (same values the web API itself uses):
     ENTRA_CLIENT_ID
     ENTRA_API_SCOPE     (defaults to "access_as_user")
 
-It uses MSAL's device-code flow — a public-client flow that needs no
-client secret — so your Entra ID app registration must have:
+It uses MSAL's device-code flow - a public-client flow that needs no
+client secret - so your Entra ID app registration must have:
 
 * An Application ID URI set (Expose an API blade), e.g. ``api://<client-id>``.
 * A scope exposed under that URI matching ``ENTRA_API_SCOPE``
@@ -29,7 +29,7 @@ client secret — so your Entra ID app registration must have:
 * "Allow public client flows" set to Yes (Authentication blade), since
   device-code sign-in is a public-client flow.
 
-Without those, MSAL will fail — this script recognizes the common failure
+Without those, MSAL will fail - this script recognizes the common failure
 codes (AADSTS7000218, AADSTS65001, AADSTS500011, AADSTS70011, AADSTS90002)
 and prints which Portal setting fixes each one; see README.md's "Entra ID
 App Registration Setup" section for the full walkthrough.
@@ -41,7 +41,7 @@ import sys
 from pathlib import Path
 
 # Running this file directly (``python scripts/get_dev_token.py``) only puts
-# ``scripts/`` on sys.path, not the project root — so ``import app...`` fails
+# ``scripts/`` on sys.path, not the project root - so ``import app...`` fails
 # with "No module named 'app'" unless the root is added explicitly here.
 # (Running it as a module, ``python -m scripts.get_dev_token`` from the
 # project root, wouldn't need this, but would need scripts/__init__.py.)
@@ -58,7 +58,7 @@ load_dotenv()
 # Maps an AADSTS error *code* (the numeric "AADSTSxxxxx" prefix Azure AD puts
 # in error_description) to a one-line pointer at the specific Portal setting
 # that fixes it. Keeps this script from just echoing Azure's often-oblique
-# error text back at you — see README.md's "Entra ID App Registration Setup"
+# error text back at you - see README.md's "Entra ID App Registration Setup"
 # section for the full walkthrough of each setting.
 _KNOWN_ERROR_HINTS = {
     "AADSTS7000218": (

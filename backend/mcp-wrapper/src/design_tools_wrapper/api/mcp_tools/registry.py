@@ -1,9 +1,10 @@
-"""The design-tools MCP server: exposes tools-service's two deterministic
-capabilities (diagram rendering, design validation) as MCP tools.
+"""The design-tools MCP server: exposes tools-service's deterministic
+capabilities (diagram rendering, design validation, work breakdown CSV
+export) as MCP tools.
 
 Mirrors Parnell-AI-Persona-Agent's per-capability wrapper shape (see
 ``backend/mcp-wrapper/src/architecture_design_wrapper/api/mcp_tools
-/registry.py`` there) — a ``FastMCP`` instance with one ``@mcp.tool()``
+/registry.py`` there) - a ``FastMCP`` instance with one ``@mcp.tool()``
 per capability, each just calling through to
 ``src.design_tools_wrapper.application.tool_calls``. This is the only
 thing the orchestrator's ``app/infrastructure/tools_client.py`` talks to;
@@ -15,6 +16,7 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 
 from src.design_tools_wrapper.application.tool_calls import (
+    export_work_breakdown,
     generate_architecture_diagram,
     validate_system_design,
 )
@@ -61,3 +63,29 @@ async def validate_system_design_tool(design_json: str) -> str:
     """
 
     return await validate_system_design(design_json)
+
+
+@mcp.tool()
+async def export_work_breakdown_tool(
+    breakdown_json: str,
+    requirements_json: str,
+    design_json: str,
+) -> str:
+    """Validate a WorkBreakdownArtifact's (JSON) traceability and render
+    it to an import-ready CSV.
+
+    Args:
+        breakdown_json: JSON-serialized WorkBreakdownArtifact.
+        requirements_json: JSON-serialized RequirementsArtifact the
+            breakdown was generated from.
+        design_json: JSON-serialized SystemDesignArtifact the breakdown
+            was generated from.
+
+    Returns:
+        JSON envelope: ``{"ok": bool, "status_code": int, "body": {...}}``.
+        ``body`` is the ``WorkBreakdownExport`` (CSV text plus validation
+        summary) when ``ok`` is true, or ``{"detail": "..."}`` when
+        export failed.
+    """
+
+    return await export_work_breakdown(breakdown_json, requirements_json, design_json)

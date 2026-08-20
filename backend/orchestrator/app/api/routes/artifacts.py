@@ -1,33 +1,33 @@
 """HTTP endpoints for reading persisted artifact *content* by version.
 
 ``app/api/routes/requirements.py`` exposes the session's *current* state
-(``RequirementsRunView`` — latest requirements, latest design, and the
+(``RequirementsRunView`` - latest requirements, latest design, and the
 Blob *paths* of the persisted JSON/SVG). It never returns older versions or
 the artifacts' actual bytes. This module is the read side of that gap: a
 UI that wants to show version history, diff two versions, or render the
 architecture diagram needs to fetch specific past versions' real content
-from Blob Storage — never fabricate it.
+from Blob Storage - never fabricate it.
 
 Every route here still goes through ``load_owned`` first, exactly like the
 session routes: a session's artifact history is only visible to whoever
 may see the session itself. Every route also requires one of the three
-functional App Roles (``Depends(require_role(*_ANY_ROLE))`` — Admin passes
+functional App Roles (``Depends(require_role(*_ANY_ROLE))`` - Admin passes
 automatically, see ``app/security/auth.py``'s RBAC section): reading
 artifact history is available to any role, unlike the write routes in
 ``app/api/routes/requirements.py``, which are gated per-action.
 
 * ``GET /requirements-runs/{id}/requirements/versions``
-  — version numbers, oldest first.
+  - version numbers, oldest first.
 * ``GET /requirements-runs/{id}/requirements/{version}``
-  — that version's ``RequirementsArtifact``.
+  - that version's ``RequirementsArtifact``.
 * ``GET /requirements-runs/{id}/architecture/versions``
-  — version numbers, oldest first.
+  - version numbers, oldest first.
 * ``GET /requirements-runs/{id}/architecture/{version}``
-  — that version's ``SystemDesignArtifact``.
+  - that version's ``SystemDesignArtifact``.
 * ``GET /requirements-runs/{id}/architecture/{version}/diagram``
-  — that version's SVG diagram markup.
+  - that version's SVG diagram markup.
 * ``GET /requirements-runs/{id}/architecture/compare``
-  — a structured, backend-computed diff between two architecture versions.
+  - a structured, backend-computed diff between two architecture versions.
 """
 
 from __future__ import annotations
@@ -45,9 +45,9 @@ from app.domain.design import SystemDesignArtifact
 from app.domain.requirements import RequirementsArtifact, StoredArtifact
 from app.security.auth import ROLE_ARCHITECT, ROLE_REVIEWER, ROLE_USER, require_role
 
-# Every route in this router needs the exact same role check — any of the
+# Every route in this router needs the exact same role check - any of the
 # three functional roles (Admin passes automatically, see
-# `app/security/auth.py`) — unlike `requirements.py`, where each route is
+# `app/security/auth.py`) - unlike `requirements.py`, where each route is
 # gated on a different role, so it's applied once here at router
 # construction (`dependencies=`) rather than repeated on every `@router.get`.
 _ANY_ROLE = (ROLE_USER, ROLE_ARCHITECT, ROLE_REVIEWER)
@@ -68,7 +68,7 @@ def _not_found(kind: str, version: int) -> HTTPException:
 
 def _malformed(kind: str, version: int) -> HTTPException:
     # Should not happen against data this app itself wrote, but a stored
-    # blob is still external input from the route's perspective — fail
+    # blob is still external input from the route's perspective - fail
     # with a clear 500 rather than let a ValidationError escape unhandled.
     return HTTPException(
         status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -83,7 +83,9 @@ def list_requirements_versions(
     session_id: str,
     request: Request,
     store: Annotated[SessionStorePort, Depends(get_session_store)],  # noqa: B008
-    artifact_store: Annotated[ArtifactStorePort, Depends(get_artifact_store)],  # noqa: B008
+    artifact_store: Annotated[
+        ArtifactStorePort, Depends(get_artifact_store)
+    ],  # noqa: B008
 ) -> list[int]:
     load_owned(store, session_id, request)
     return artifact_store.list_requirements_versions(session_id)
@@ -97,7 +99,9 @@ def get_requirements_version(
     version: int,
     request: Request,
     store: Annotated[SessionStorePort, Depends(get_session_store)],  # noqa: B008
-    artifact_store: Annotated[ArtifactStorePort, Depends(get_artifact_store)],  # noqa: B008
+    artifact_store: Annotated[
+        ArtifactStorePort, Depends(get_artifact_store)
+    ],  # noqa: B008
 ) -> RequirementsArtifact:
     load_owned(store, session_id, request)
 
@@ -118,7 +122,9 @@ def list_architecture_versions(
     session_id: str,
     request: Request,
     store: Annotated[SessionStorePort, Depends(get_session_store)],  # noqa: B008
-    artifact_store: Annotated[ArtifactStorePort, Depends(get_artifact_store)],  # noqa: B008
+    artifact_store: Annotated[
+        ArtifactStorePort, Depends(get_artifact_store)
+    ],  # noqa: B008
 ) -> list[int]:
     load_owned(store, session_id, request)
     return artifact_store.list_design_versions(session_id)
@@ -151,16 +157,18 @@ def compare_architecture_versions(
     from_version: Annotated[int, Query(alias="from")],
     to_version: Annotated[int, Query(alias="to")],
     store: Annotated[SessionStorePort, Depends(get_session_store)],  # noqa: B008
-    artifact_store: Annotated[ArtifactStorePort, Depends(get_artifact_store)],  # noqa: B008
+    artifact_store: Annotated[
+        ArtifactStorePort, Depends(get_artifact_store)
+    ],  # noqa: B008
 ) -> ArchitectureComparison:
     """A structured diff between two persisted architecture versions.
 
     The frontend already computes this client-side (`VersionBar`/`DiffList`
-    fetch both full versions and diff in the browser — see
+    fetch both full versions and diff in the browser - see
     `frontend/src/lib/diff.ts`); this is the backend equivalent, for any
     client that wants the diff without fetching both full artifacts and
     re-implementing the comparison itself. `?from=`/`?to=` are plain
-    version numbers, same as the `{version}` path parameter below — this is
+    version numbers, same as the `{version}` path parameter below - this is
     a query-parameterized sibling of it, not a new versioning scheme.
 
     Registered *before* `/{session_id}/architecture/{version}` below: since
@@ -187,7 +195,9 @@ def get_architecture_version(
     version: int,
     request: Request,
     store: Annotated[SessionStorePort, Depends(get_session_store)],  # noqa: B008
-    artifact_store: Annotated[ArtifactStorePort, Depends(get_artifact_store)],  # noqa: B008
+    artifact_store: Annotated[
+        ArtifactStorePort, Depends(get_artifact_store)
+    ],  # noqa: B008
 ) -> SystemDesignArtifact:
     load_owned(store, session_id, request)
     return _load_architecture_version(artifact_store, session_id, version)
@@ -199,7 +209,9 @@ def get_architecture_diagram(
     version: int,
     request: Request,
     store: Annotated[SessionStorePort, Depends(get_session_store)],  # noqa: B008
-    artifact_store: Annotated[ArtifactStorePort, Depends(get_artifact_store)],  # noqa: B008
+    artifact_store: Annotated[
+        ArtifactStorePort, Depends(get_artifact_store)
+    ],  # noqa: B008
 ) -> Response:
     load_owned(store, session_id, request)
 

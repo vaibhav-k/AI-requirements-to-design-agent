@@ -43,8 +43,19 @@
   vertical-align: middle;
 }
 
+/* "Signed in as ..." / the role badge / "Sign out" are three visually
+   distinct pieces crammed onto one line by AuthBar; a plain text node with
+   a literal space between them reads as cramped once the role badge's own
+   pill padding is added on top, so give the row real, consistent gaps
+   instead of relying on collapsible whitespace. */
+.auth-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 /* Shows a component's `domain` (app/design/models.py) next to its name in
-   the Architecture text panel — the same grouping used to cluster
+   the Architecture text panel - the same grouping used to cluster
    components in the rendered diagram (app/design/diagram.py), surfaced
    here too so the two views stay legible against each other. */
 .domain-badge {
@@ -81,7 +92,7 @@
   gap: 12px;
   margin-top: 12px;
   /* `.gate`'s `text-align: center` (its only current use) has no effect on
-   * a flex container's children — flex items follow `justify-content`, not
+   * a flex container's children - flex items follow `justify-content`, not
    * `text-align`, and that defaults to `flex-start` (left-aligned). Without
    * this, Sign in/Continue without signing in sit flush left instead of
    * centered under the centered heading/paragraph above them. */
@@ -181,7 +192,7 @@ textarea {
 }
 
 /* The collapsed rail: just wide enough for the expand toggle, so the
- * pane can be tucked away without losing the ability to bring it back —
+ * pane can be tucked away without losing the ability to bring it back -
  * hiding it entirely (rendering nothing) would leave no way to reopen it. */
 .sidebar.sidebar-collapsed {
   flex: none;
@@ -407,6 +418,16 @@ textarea {
   border-color: var(--accent-border);
 }
 
+/* Send/Approve/Reject are frequent, low-stakes actions in the
+ * conversation's button row; sized down so they read as secondary next
+ * to the pipeline-advancing action beside them (e.g. "Accept & generate
+ * architecture" or "Generate work breakdown"), which keeps its default
+ * (larger) button size as the visually primary call to action. */
+.button-sm {
+  padding: 4px 8px;
+  font-size: 0.85em;
+}
+
 .source-file-pill {
   display: inline-block;
   font-size: 0.85em;
@@ -532,8 +553,8 @@ textarea {
 }
 
 .diff-added .diff-tag {
-  color: #1a7f37;
-  background: rgba(26, 127, 55, 0.12);
+  color: var(--success-text-small);
+  background: var(--success-bg);
 }
 
 .diff-removed {
@@ -618,7 +639,104 @@ textarea {
   width: fit-content;
 }
 
+/* --- Work breakdown --- */
+
+.wb-feature {
+  margin-bottom: 20px;
+}
+
+.wb-story {
+  margin-left: 16px;
+  margin-bottom: 12px;
+}
+
+.wb-story h4 {
+  margin-bottom: 4px;
+}
+
+.work-breakdown-view .traceability-tags {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.ambiguities-list {
+  padding-left: 20px;
+}
+
 .diagram-hint {
   padding: 6px 8px 8px;
   margin: 0;
+}
+
+/* --- Requirements editor --- */
+
+.requirements-editor {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+
+.requirements-editor label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85em;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.requirements-editor textarea {
+  font-size: 1em;
+}
+
+.requirement-list-editor {
+  margin-bottom: 12px;
+}
+
+.requirement-list-editor ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+.requirement-list-editor li {
+  margin-bottom: 4px;
+}
+
+.requirement-remove-button {
+  padding: 2px 8px;
+  font-size: 0.8em;
+  color: var(--error);
+  background: var(--error-bg);
+  border-color: var(--error);
+}
+
+.requirement-add-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.requirement-add-form input[type="text"] {
+  font: inherit;
+  flex: 1;
+  min-width: 160px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: inherit;
+}
+
+.requirement-add-form select {
+  font: inherit;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: inherit;
 }

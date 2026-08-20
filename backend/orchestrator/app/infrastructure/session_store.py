@@ -3,8 +3,8 @@
 The CLI (``app/main.py``) keeps its session state as plain Python objects
 (``DesignSession``/``ArchitectureSession``) that live for the lifetime of one
 process and one conversation. The web API has no equivalent process to hold
-that state in between requests — each request is its own, possibly
-different, worker — so a session's requirements/design progress has to be
+that state in between requests - each request is its own, possibly
+different, worker - so a session's requirements/design progress has to be
 persisted somewhere a later request can read it back from. One deliberate
 choice here: everything else in this project (``ArtifactStore``, the use
 cases) is written against the *synchronous* Azure/OpenAI SDKs, so this
@@ -13,10 +13,10 @@ store uses the synchronous ``azure.cosmos.CosmosClient`` rather than
 ``def`` (not ``async def``) so Starlette runs them in a threadpool.
 
 ``CosmosSessionStore`` is the concrete
-``app.application.ports.SessionStorePort`` implementation — the session
+``app.application.ports.SessionStorePort`` implementation - the session
 entity itself (``SessionRecord``) lives in ``app.domain.session``, and the
 port/error types (``SessionStorePort``, ``SessionConflictError``) live in
-``app.application`` — see README -> "Clean Architecture Migration" ->
+``app.application`` - see README -> "Clean Architecture Migration" ->
 "Ports + adapters for storage" for why this module used to define all
 three itself.
 """
@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 class CosmosSessionStore:
     """Synchronous Cosmos-backed session store.
 
-    Implements ``app.application.ports.SessionStorePort`` structurally —
+    Implements ``app.application.ports.SessionStorePort`` structurally -
     no inheritance needed, just matching method signatures.
     """
 
@@ -76,7 +76,7 @@ class CosmosSessionStore:
 
     def close(self) -> None:
         """No-op: the synchronous ``azure.cosmos.CosmosClient`` (unlike its
-        ``.aio`` counterpart) exposes no ``close()`` — it issues each request
+        ``.aio`` counterpart) exposes no ``close()`` - it issues each request
         over a pooled ``requests.Session`` under the hood rather than holding
         a persistent connection, so there's nothing here to release. Kept as
         a method (rather than removed) so the shutdown call site in
@@ -106,8 +106,8 @@ class CosmosSessionStore:
         """Persist ``record``, using its ``etag`` as an if-match condition when set.
 
         ``record.etag`` is populated whenever a record came from ``get()`` (or
-        an earlier ``create()``/``upsert()``), so the common case — load,
-        mutate, save — is conditional on nothing else having written to this
+        an earlier ``create()``/``upsert()``), so the common case - load,
+        mutate, save - is conditional on nothing else having written to this
         session in between. A record with no ``etag`` (never round-tripped
         through Cosmos) writes unconditionally, same as before this existed.
 
@@ -137,7 +137,7 @@ class CosmosSessionStore:
         """Every session started by one user, newest first.
 
         Cross-partition (the container is partitioned by ``session_id``, and
-        one user's sessions are spread across all of them) — filtered
+        one user's sessions are spread across all of them) - filtered
         server-side on ``owner_oid`` rather than reading everything and
         filtering here. Returns ``[]`` for a falsy ``owner_oid`` rather than
         querying, since an unowned or anonymous caller has no sessions to
@@ -161,7 +161,7 @@ class CosmosSessionStore:
 
         Only meant for an ``Admin``-role caller (see
         ``app/api/ownership.py``'s ``is_admin`` and ``list_runs`` in
-        ``app/api/routes/requirements.py``) — "Admins can manage users and
+        ``app/api/routes/requirements.py``) - "Admins can manage users and
         access across the system" needs a way to see sessions that aren't
         theirs, which ``list_for_owner`` deliberately can't do. Same
         cross-partition query shape as ``list_for_owner``, just without the

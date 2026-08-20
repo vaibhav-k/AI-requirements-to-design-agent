@@ -32,7 +32,7 @@ class _FakeAgentResponse:
 
 class _FakeUnderlyingAgent:
     """Stands in for the ``agent_framework.Agent`` instance returned by
-    ``OpenAIChatClient.as_agent`` — this test exercises
+    ``OpenAIChatClient.as_agent`` - this test exercises
     ``AgentFrameworkRequirementsAgent`` without making any real network
     call or requiring live Azure OpenAI credentials."""
 
