@@ -1,0 +1,81 @@
+"""Unit tests for the design-tools wrapper's httpx translation layer.
+
+Mocks ``httpx.AsyncClient`` rather than running a real tools-service
+process — this wrapper's only job is "deserialize, POST, wrap the
+response in an envelope, reserialize", so that's what's under test, not
+tools-service's own behavior (covered by ``backend/tools-service/tests``).
+"""
+
+from __future__ import annotations
+
+import json
+
+import httpx
+import pytest
+from src.design_tools_wrapper.application.tool_calls import (
+    generate_architecture_diagram,
+    validate_system_design,
+)
+
+_DESIGN_JSON = json.dumps({"architecture_summary": "A design.", "components": []})
+
+
+class _FakeResponse:
+    def __init__(self, status_code: int, payload: dict) -> None:
+        self.status_code = status_code
+        self._payload = payload
+        self.is_error = status_code >= 400
+        self.text = json.dumps(payload)
+
+    def json(self) -> dict:
+        return self._payload
+
+
+class _FakeAsyncClient:
+    def __init__(self, response: _FakeResponse) -> None:
+        self._response = response
+        self.posted_to: str | None = None
+
+    async def __aenter__(self) -> _FakeAsyncClient:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    async def post(self, url: str, json: dict) -> _FakeResponse:  # noqa: A002
+        self.posted_to = url
+        return self._response
+
+
+@pytest.mark.asyncio
+async def test_generate_architecture_diagram_envelope_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_client = _FakeAsyncClient(_FakeResponse(200, {"svg": "<svg></svg>"}))
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: fake_client)
+
+    result = json.loads(await generate_architecture_diagram(_DESIGN_JSON))
+
+    assert result == {
+        "ok": True,
+        "status_code": 200,
+        "body": {"svg": "<svg></svg>"},
+    }
+    assert fake_client.posted_to is not None
+    assert fake_client.posted_to.endswith("/tools/diagrams/generate")
+
+
+@pytest.mark.asyncio
+async def test_validate_system_design_envelope_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_client = _FakeAsyncClient(
+        _FakeResponse(422, {"detail": "Component IDs must be unique."})
+    )
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: fake_client)
+
+    result = json.loads(await validate_system_design(_DESIGN_JSON))
+
+    assert result["ok"] is False
+    assert result["status_code"] == 422
+    assert "unique" in result["body"]["detail"]

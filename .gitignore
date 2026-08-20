@@ -26,6 +26,9 @@ htmlcov/
 
 # IDE
 .vscode/
+!backend/orchestrator/.vscode/settings.json
+!backend/tools-service/.vscode/settings.json
+!backend/mcp-wrapper/.vscode/settings.json
 .idea/
 
 # OS

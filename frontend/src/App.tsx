@@ -7,7 +7,40 @@ import { authIsConfigured, loginRequest } from "./authConfig"
 import { ErrorBanner } from "./components/ErrorBanner"
 import { Sidebar } from "./components/Sidebar"
 import { Workspace } from "./components/Workspace"
+import { ROLE_ADMIN, ROLE_ARCHITECT, ROLE_REVIEWER, ROLE_USER } from "./permissions"
 import { useCurrentUser } from "./useCurrentUser"
+
+/** What each Entra ID App Role actually permits — mirrors the permission
+ * matrix in the README's "RBAC (Role-Based Access Control)" section
+ * (kept in sync by hand, same as `permissions.ts`'s header comment).
+ * Each entry is written to stand on its own: the tooltip only ever shows
+ * the roles one caller actually holds, so `Admin`'s line spells out what
+ * it grants rather than saying "all of the above" — a caller who only
+ * holds `Admin` would see just that one line, with nothing else to point
+ * back to. This is display text only, shown in `RoleBadge`'s tooltip; it
+ * has no bearing on what's actually allowed — that's still `hasAnyRole`
+ * on the frontend and `require_role` on the backend, same as everywhere
+ * else in this app. */
+const ROLE_PERMISSIONS: Record<string, string> = {
+  [ROLE_USER]: "Create and refine requirements on your own sessions",
+  [ROLE_ARCHITECT]: "Generate and refine an architecture on your own sessions",
+  [ROLE_REVIEWER]: "Approve or reject an architecture on your own sessions",
+  [ROLE_ADMIN]:
+    "Create/refine requirements, generate/refine architectures, and approve/reject " +
+    "architectures — on every session in the system, not just your own",
+}
+
+/** Builds the multi-line tooltip text for `RoleBadge`: one line per role
+ * the caller holds, plus the one permission every role shares. Roles the
+ * caller holds that aren't in `ROLE_PERMISSIONS` (a role assigned in
+ * Entra but not one this app defines) still get a line, so the tooltip
+ * never silently drops a role the badge itself is showing. */
+function roleTooltip(roles: string[]): string {
+  const lines = roles.map(
+    (role) => `${role} — ${ROLE_PERMISSIONS[role] ?? "No documented permissions for this role."}`,
+  )
+  return [...lines, "", "Every role can also view and rename its accessible sessions."].join("\n")
+}
 
 type View = { name: "new" } | { name: "session"; sessionId: string }
 
@@ -49,7 +82,7 @@ function describeSignInError(err: unknown): string {
 function RoleBadge() {
   const { roles, loaded } = useCurrentUser()
   if (!loaded || roles.length === 0) return null
-  return <span className="role-badge" title="Your Entra ID App Roles">{roles.join(", ")}</span>
+  return <span className="role-badge" title={roleTooltip(roles)}>{roles.join(", ")}</span>
 }
 
 function AuthBar() {

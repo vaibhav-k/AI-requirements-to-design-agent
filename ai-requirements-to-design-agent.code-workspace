@@ -1,0 +1,26 @@
+{
+  "folders": [
+    { "name": "orchestrator", "path": "backend/orchestrator" },
+    { "name": "tools-service", "path": "backend/tools-service" },
+    { "name": "mcp-wrapper", "path": "backend/mcp-wrapper" },
+    { "name": "frontend", "path": "frontend" }
+  ],
+  "settings": {
+    // Applies to every folder above. Each folder also has its own
+    // .vscode/settings.json picking its own interpreter/venv — VS Code's
+    // Python extension (Pylance) starts one language server per top-level
+    // workspace folder, so each service is analyzed as its own isolated
+    // project. This is what actually fixes the "Duplicate module named
+    // app / src" errors: those only happen when one tool invocation (or
+    // one Pylance instance) is pointed at the whole repo root at once,
+    // which this workspace file is specifically built to avoid. See the
+    // root README's "Static analysis / IDE setup" section.
+    "python.analysis.exclude": ["**/node_modules", "**/__pycache__", "**/.venv", "**/dist"],
+    "files.exclude": {
+      "**/__pycache__": true,
+      "**/.mypy_cache": true,
+      "**/.pytest_cache": true,
+      "**/.ruff_cache": true
+    }
+  }
+}

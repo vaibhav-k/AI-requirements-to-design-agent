@@ -1,0 +1,22 @@
+[project]
+name = "design-tools-wrapper"
+version = "0.1.0"
+description = "Thin internal MCP gateway between backend/orchestrator and backend/tools-service — see the root README's 'Service Architecture' section."
+requires-python = ">=3.12"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+exclude = "^\\.venv/"
+warn_unused_ignores = true
+
+# pytest config stays in pytest.ini (already present) rather than being
+# duplicated here — pytest.ini takes priority over [tool.pytest.ini_options]
+# when both exist, so adding one here would just be dead config.
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "FAST"]
