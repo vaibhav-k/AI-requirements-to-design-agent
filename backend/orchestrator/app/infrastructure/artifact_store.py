@@ -147,6 +147,19 @@ class ArtifactStore:
             return None
         return downloader.readall().decode("utf-8")
 
+    def _download_bytes(self, blob_name: str) -> bytes | None:
+        """The raw bytes of ``blob_name``, or ``None`` if it doesn't exist.
+
+        The binary analogue of ``_download`` - needed for
+        ``get_technical_design_docx`` since a ``.docx`` isn't UTF-8 text
+        like every other artifact this store has held so far.
+        """
+        try:
+            downloader = self.container.get_blob_client(blob_name).download_blob()
+        except ResourceNotFoundError:
+            return None
+        return downloader.readall()
+
     def get_latest_design_version(self, session_id: str) -> int:
         """Return the latest persisted design JSON version for a session."""
 
@@ -184,10 +197,26 @@ class ArtifactStore:
         blob_name = f"{self.environment}/{session_id}/design/v{version}.json"
         return self._download(blob_name)
 
-    def get_design_svg(self, session_id: str, version: int) -> str | None:
+    @staticmethod
+    def _svg_suffix(kind: str) -> str:
+        """The blob-name suffix for one diagram ``kind``.
+
+        ``"logical"`` keeps the original, un-suffixed ``.svg`` name so
+        every design version persisted before the two-diagram
+        architecture-generation phase existed keeps resolving under the
+        same blob name; ``"azure"`` (the new Azure Service Mapping
+        Diagram) gets its own ``.azure.svg`` name alongside it.
+        """
+        return ".svg" if kind == "logical" else f".{kind}.svg"
+
+    def get_design_svg(
+        self, session_id: str, version: int, kind: str = "logical"
+    ) -> str | None:
         """The raw architecture diagram SVG markup for one design version."""
 
-        blob_name = f"{self.environment}/{session_id}/design/v{version}.svg"
+        blob_name = (
+            f"{self.environment}/{session_id}/design/v{version}{self._svg_suffix(kind)}"
+        )
         return self._download(blob_name)
 
     def save_design_json(
@@ -217,10 +246,14 @@ class ArtifactStore:
         session_id: str,
         version: int,
         content: str,
+        kind: str = "logical",
     ) -> str:
-        """Create the SVG for an existing design version."""
+        """Create one of the two SVG diagrams for an existing design
+        version - see ``_svg_suffix`` for ``kind``."""
 
-        blob_name = f"{self.environment}/{session_id}/design/v{version}.svg"
+        blob_name = (
+            f"{self.environment}/{session_id}/design/v{version}{self._svg_suffix(kind)}"
+        )
 
         return self._upload(
             blob_name=blob_name,
@@ -247,10 +280,13 @@ class ArtifactStore:
         self,
         session_id: str,
         version: int,
+        kind: str = "logical",
     ) -> None:
         """Delete a design SVG artifact if it exists."""
 
-        blob_name = f"{self.environment}/{session_id}/design/v{version}.svg"
+        blob_name = (
+            f"{self.environment}/{session_id}/design/v{version}{self._svg_suffix(kind)}"
+        )
 
         self.container.delete_blob(
             blob_name,
@@ -386,6 +422,71 @@ class ArtifactStore:
             blob_name=blob_name,
             content=content,
             content_type="text/csv",
+            overwrite=True,
+        )
+
+    def list_technical_design_versions(self, session_id: str) -> list[int]:
+        """Every technical design version persisted for this session,
+        oldest first - the technical-design analogue of
+        ``list_work_breakdown_versions``."""
+
+        prefix = f"{self.environment}/{session_id}/technical-design/"
+        return self._list_versions(prefix, ".json")
+
+    def get_technical_design_json(self, session_id: str, version: int) -> str | None:
+        """The raw ``TechnicalDesignArtifact`` JSON for one version."""
+
+        blob_name = f"{self.environment}/{session_id}/technical-design/v{version}.json"
+        return self._download(blob_name)
+
+    def save_technical_design_json(
+        self,
+        session_id: str,
+        version: int,
+        content: str,
+    ) -> str:
+        """Create a technical design JSON version without overwriting it -
+        immutable once written, same convention as
+        ``save_work_breakdown_json``."""
+
+        blob_name = f"{self.environment}/{session_id}/technical-design/v{version}.json"
+
+        try:
+            return self._upload(
+                blob_name=blob_name,
+                content=content,
+                content_type="application/json",
+                overwrite=False,
+            )
+        except ResourceExistsError as exc:
+            raise ArtifactVersionConflict(
+                f"Technical design version {version} already exists."
+            ) from exc
+
+    def get_technical_design_docx(self, session_id: str, version: int) -> bytes | None:
+        """The most recently rendered ``.docx`` export for one technical
+        design version - the binary analogue of ``get_work_breakdown_csv``."""
+
+        blob_name = f"{self.environment}/{session_id}/technical-design/v{version}.docx"
+        return self._download_bytes(blob_name)
+
+    def save_technical_design_docx(
+        self,
+        session_id: str,
+        version: int,
+        content: bytes,
+    ) -> str:
+        """Persist (overwriting any previous export) the rendered
+        ``.docx`` for one technical design version - see
+        ``ArtifactStorePort.save_technical_design_docx`` for why this
+        overwrites unlike ``save_technical_design_json``."""
+
+        blob_name = f"{self.environment}/{session_id}/technical-design/v{version}.docx"
+
+        return self._upload(
+            blob_name=blob_name,
+            content=content,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             overwrite=True,
         )
 

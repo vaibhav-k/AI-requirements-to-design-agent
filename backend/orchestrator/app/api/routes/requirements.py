@@ -81,6 +81,7 @@ from app.design.session import ArchitectureSession, DesignGenerationWorkflowErro
 from app.domain.design import ApprovalDecision, SystemDesignArtifact
 from app.domain.requirements import Requirement, RequirementsArtifact, StoredArtifact
 from app.domain.session import SessionRecord
+from app.domain.technical_design import TechnicalDesignArtifact
 from app.domain.work_breakdown import WorkBreakdownArtifact
 from app.infrastructure.sync_bridge import run_sync
 from app.ingestion import (
@@ -194,11 +195,16 @@ class RequirementsRunView(BaseModel):
     design: SystemDesignArtifact | None
     design_blob: str | None
     diagram_blob: str | None
+    azure_diagram_blob: str | None
     approval_status: str
     approval_history: list[ApprovalDecision]
     work_breakdown_version: int
     work_breakdown: WorkBreakdownArtifact | None
     work_breakdown_blob: str | None
+    technical_design_version: int
+    technical_design: TechnicalDesignArtifact | None
+    technical_design_blob: str | None
+    technical_design_export_blob: str | None
     error: str | None
 
     @classmethod
@@ -215,11 +221,16 @@ class RequirementsRunView(BaseModel):
             design=record.design,
             design_blob=record.design_blob,
             diagram_blob=record.diagram_blob,
+            azure_diagram_blob=record.azure_diagram_blob,
             approval_status=record.approval_status,
             approval_history=record.approval_history,
             work_breakdown_version=record.work_breakdown_version,
             work_breakdown=record.work_breakdown,
             work_breakdown_blob=record.work_breakdown_blob,
+            technical_design_version=record.technical_design_version,
+            technical_design=record.technical_design,
+            technical_design_blob=record.technical_design_blob,
+            technical_design_export_blob=record.technical_design_export_blob,
             error=record.error,
         )
 
@@ -491,6 +502,7 @@ def _apply_diagram_to_record(
     record.design = result.design
     record.design_blob = result.design_blob
     record.diagram_blob = result.diagram_blob
+    record.azure_diagram_blob = result.azure_diagram_blob
     # Same "a freshly (re)generated architecture has never been reviewed"
     # reset accept_run/refine_architecture already apply.
     record.approval_status = APPROVAL_PENDING
@@ -1014,6 +1026,7 @@ def accept_run(
     record.design = result.design
     record.design_blob = result.design_blob
     record.diagram_blob = result.diagram_blob
+    record.azure_diagram_blob = result.azure_diagram_blob
     # A freshly generated architecture has never been reviewed - reset any
     # leftover status from a previous session state (there shouldn't be
     # one, since accept only runs from STAGE_REQUIREMENTS, but this keeps
@@ -1100,6 +1113,7 @@ def refine_architecture(
     record.design = result.design
     record.design_blob = result.design_blob
     record.diagram_blob = result.diagram_blob
+    record.azure_diagram_blob = result.azure_diagram_blob
     # The design just changed - any prior approve/reject decision was made
     # against the *previous* design_version and must not be read as
     # covering this new one. approval_history is untouched: that decision

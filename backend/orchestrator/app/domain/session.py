@@ -32,6 +32,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.design import ApprovalDecision, SystemDesignArtifact
 from app.domain.requirements import RequirementsArtifact
+from app.domain.technical_design import TechnicalDesignArtifact
 from app.domain.work_breakdown import WorkBreakdownArtifact
 
 
@@ -68,13 +69,18 @@ class SessionRecord(BaseModel):
     """
 
     stage: str = "requirements"
-    # "requirements" | "generating" | "architecture" | "work_breakdown".
+    # "requirements" | "generating" | "architecture" | "work_breakdown" |
+    # "technical_design".
     # "work_breakdown" is reached from "architecture" only once the current
     # design has been approved (see ``app/api/routes/work_breakdown.py``'s
-    # ``generate_work_breakdown``) - the fourth and final stage of the
-    # pipeline, one Feature -> Story -> Task breakdown per approved
-    # architecture. Like "architecture", it's re-entered via "generating"
-    # on every ``refine`` call.
+    # ``generate_work_breakdown``) - one Feature -> Story -> Task breakdown
+    # per approved architecture. Like "architecture", it's re-entered via
+    # "generating" on every ``refine`` call.
+    # "technical_design" is reached from "work_breakdown" the same way, one
+    # stage later still - the fifth and final stage of the pipeline, one
+    # technical design document per session, compiled from the
+    # requirements/architecture/work breakdown already persisted (see
+    # ``app/api/routes/technical_design.py``'s ``generate_technical_design``).
 
     source_text: str = ""
     source_filename: str | None = None
@@ -97,6 +103,11 @@ class SessionRecord(BaseModel):
     design: SystemDesignArtifact | None = None
     design_blob: str | None = None
     diagram_blob: str | None = None
+    """Blob name of the persisted Logical Architecture Diagram SVG."""
+    azure_diagram_blob: str | None = None
+    """Blob name of the persisted Azure Service Mapping Diagram SVG -
+    the second of the two required architecture-generation-phase
+    diagrams, alongside `diagram_blob`."""
 
     # Mirrors design_version/design/design_blob above, one stage later in
     # the pipeline: 0/None until the first successful
@@ -115,6 +126,23 @@ class SessionRecord(BaseModel):
     # artifact rather than an immutable version - re-exporting the same
     # ``work_breakdown_version`` overwrites it rather than conflicting.
     work_breakdown_export_blob: str | None = None
+
+    # Mirrors work_breakdown_version/work_breakdown/work_breakdown_blob
+    # above, one stage later still: 0/None until the first successful
+    # ``POST /requirements-runs/{id}/technical-design`` call (only
+    # reachable once ``stage == "work_breakdown"`` - see
+    # ``app/api/routes/technical_design.py``), then bumped by every
+    # subsequent ``.../technical-design/refine`` call the same way
+    # work_breakdown_version bumps on refine.
+    technical_design_version: int = 0
+    technical_design: TechnicalDesignArtifact | None = None
+    technical_design_blob: str | None = None
+    # Blob name of the most recently rendered .docx export for
+    # ``technical_design``/``technical_design_version`` - the
+    # technical-design analogue of ``work_breakdown_export_blob``. Same
+    # "derived, re-computable cache, overwrite rather than conflict" rule
+    # applies (see ``ArtifactStorePort.save_technical_design_docx``).
+    technical_design_export_blob: str | None = None
 
     # "pending" | "approved" | "rejected". Only meaningful once `stage` is
     # `"architecture"` - reset to "pending" every time `design_version`

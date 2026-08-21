@@ -74,14 +74,28 @@ async def _post(path: str, design_json: str) -> dict[str, Any]:
     return await _post_payload(path, json.loads(design_json))
 
 
-async def generate_architecture_diagram(design_json: str) -> str:
+async def generate_architecture_diagram(
+    design_json: str,
+    version: int = 1,
+    generated_at: str = "TBD",
+) -> str:
     """Call tools-service's diagram-rendering endpoint.
 
-    Returns a JSON envelope; ``body`` is ``{"svg": "..."}`` when
-    ``ok`` is true, or ``{"detail": "..."}`` when it's false.
+    ``version``/``generated_at`` feed the deterministic diagram-metadata
+    block tools-service renders on each diagram (see
+    ``src/api/routes/diagrams.py``) - never invented by the LLM.
+
+    Returns a JSON envelope; ``body`` is ``{"logical_svg": "...",
+    "azure_mapping_svg": "..."}`` when ``ok`` is true, or
+    ``{"detail": "..."}`` when it's false.
     """
 
-    envelope = await _post("/tools/diagrams/generate", design_json)
+    payload = {
+        "design": json.loads(design_json),
+        "version": version,
+        "generated_at": generated_at,
+    }
+    envelope = await _post_payload("/tools/diagrams/generate", payload)
     return json.dumps(envelope)
 
 
@@ -123,4 +137,34 @@ async def export_work_breakdown(
     }
 
     envelope = await _post_payload("/tools/work-breakdown/export", payload)
+    return json.dumps(envelope)
+
+
+async def export_technical_design(
+    document_json: str,
+    design_json: str,
+    requirements_json: str,
+    work_breakdown_json: str,
+) -> str:
+    """Call tools-service's technical-design export endpoint.
+
+    Same "assemble four already-JSON-encoded strings into one payload
+    dict" shape as ``export_work_breakdown`` above - the technical-design
+    analogue, one artifact wider since the rendered document's
+    traceability appendix and embedded architecture diagram both need
+    their own source artifact.
+
+    Returns a JSON envelope; ``body`` is the ``TechnicalDesignExport``
+    (base64 ``.docx`` bytes plus rendering summary) when ``ok`` is true,
+    or ``{"detail": "..."}`` when it's false.
+    """
+
+    payload = {
+        "document": json.loads(document_json),
+        "design": json.loads(design_json),
+        "requirements": json.loads(requirements_json),
+        "work_breakdown": json.loads(work_breakdown_json),
+    }
+
+    envelope = await _post_payload("/tools/technical-design/export", payload)
     return json.dumps(envelope)

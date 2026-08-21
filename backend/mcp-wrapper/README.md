@@ -1,7 +1,7 @@
 # design-tools-wrapper (mcp-wrapper)
 
 A thin internal MCP gateway sitting between `backend/orchestrator` and
-`backend/tools-service`. It exposes tools-service's three REST endpoints
+`backend/tools-service`. It exposes tools-service's four REST endpoints
 as MCP tools and does nothing else - no business logic, no state, no LLM
 calls.
 
@@ -21,15 +21,19 @@ gateway exists.
 
 ## Tools exposed
 
-All three tools live on one `FastMCP` server named `"design-tools"`,
+All four tools live on one `FastMCP` server named `"design-tools"`,
 mounted at `/mcp/design-tools`:
 
 * `generate_architecture_diagram_tool(design_json: str) -> str`
 * `validate_system_design_tool(design_json: str) -> str`
 * `export_work_breakdown_tool(breakdown_json: str, requirements_json: str, design_json: str) -> str`
-  - the odd one out: its request body is three artifacts, not one, since
-  tools-service needs the requirements/architecture the breakdown claims
-  to trace back to in order to catch a fabricated or uncovered ID.
+  - its request body is three artifacts, not one, since tools-service
+  needs the requirements/architecture the breakdown claims to trace back
+  to in order to catch a fabricated or uncovered ID.
+* `export_technical_design_tool(document_json: str, design_json: str, requirements_json: str, work_breakdown_json: str) -> str`
+  - four artifacts: the document itself, plus the design (embedded
+  diagram), requirements, and work breakdown (both referenced by the
+  rendered document's traceability appendix).
 
 Every tool returns a JSON envelope,
 `{"ok": bool, "status_code": int, "body": {...}}` - this wrapper's tools
@@ -49,12 +53,13 @@ mcp-wrapper/
 │                                 # entry point: `python combined_main.py`
 ├── src/design_tools_wrapper/
 │   ├── api/mcp_tools/
-│   │   └── registry.py          # FastMCP instance + the three @mcp.tool() functions
+│   │   └── registry.py          # FastMCP instance + the four @mcp.tool() functions
 │   ├── application/
 │   │   └── tool_calls.py        # httpx translation layer: deserialize,
 │   │                             # POST to tools-service, wrap in envelope
 │   │                             # (export_work_breakdown assembles a
-│   │                             # three-artifact payload; the other two
+│   │                             # three-artifact payload, export_technical_design
+│   │                             # a four-artifact payload; the other two
 │   │                             # each POST a single already-JSON artifact)
 │   └── infrastructure/
 │       └── config.py            # Settings (env prefix DESIGN_TOOLS_WRAPPER_,

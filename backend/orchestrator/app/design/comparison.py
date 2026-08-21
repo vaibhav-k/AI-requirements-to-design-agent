@@ -23,11 +23,14 @@ from typing import Generic, TypeVar
 from pydantic import BaseModel
 
 from app.domain.design import (
+    Actor,
+    AzureServiceMapping,
     DesignAssumption,
     DesignComponent,
     DesignInterface,
     DesignQuestion,
     ExternalDependency,
+    SupportingAzureService,
     SystemDesignArtifact,
 )
 
@@ -96,6 +99,9 @@ class ArchitectureComparison(BaseModel):
     components: ListDiff[DesignComponent]
     interfaces: ListDiff[DesignInterface]
     external_dependencies: ListDiff[ExternalDependency]
+    actors: ListDiff[Actor]
+    azure_mappings: ListDiff[AzureServiceMapping]
+    supporting_azure_services: ListDiff[SupportingAzureService]
     assumptions: ListDiff[DesignAssumption]
     open_questions: ListDiff[DesignQuestion]
 
@@ -120,6 +126,11 @@ def compare_architectures(
         interfaces=_diff_by_id(before.interfaces, after.interfaces),
         external_dependencies=_diff_by_id(
             before.external_dependencies, after.external_dependencies
+        ),
+        actors=_diff_by_id(before.actors, after.actors),
+        azure_mappings=_diff_by_id(before.azure_mappings, after.azure_mappings),
+        supporting_azure_services=_diff_by_id(
+            before.supporting_azure_services, after.supporting_azure_services
         ),
         assumptions=_diff_by_id(before.assumptions, after.assumptions),
         open_questions=_diff_by_id(before.open_questions, after.open_questions),

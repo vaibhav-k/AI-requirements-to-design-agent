@@ -194,9 +194,9 @@ def test_generate_work_breakdown_generates_and_persists(
     record = approved_architecture_record()
     fakes["store"].get.return_value = record
     fakes["work_breakdown_analyzer"].execute.return_value = make_breakdown()
-    fakes["artifact_store"].save_work_breakdown_json.return_value = (
-        "dev/abc-123/work-breakdown/v1.json"
-    )
+    fakes[
+        "artifact_store"
+    ].save_work_breakdown_json.return_value = "dev/abc-123/work-breakdown/v1.json"
 
     stage_snapshots: list[str] = []
 
@@ -227,8 +227,8 @@ def test_generate_work_breakdown_returns_422_and_reverts_stage_on_failure(
 ) -> None:
     record = approved_architecture_record()
     fakes["store"].get.return_value = record
-    fakes["work_breakdown_analyzer"].execute.side_effect = (
-        WorkBreakdownGenerationError("boom")
+    fakes["work_breakdown_analyzer"].execute.side_effect = WorkBreakdownGenerationError(
+        "boom"
     )
 
     stage_snapshots: list[str] = []
@@ -284,9 +284,9 @@ def test_refine_work_breakdown_bumps_version_and_persists(
         ]
     )
     fakes["work_breakdown_analyzer"].execute.return_value = refined
-    fakes["artifact_store"].save_work_breakdown_json.return_value = (
-        "dev/abc-123/work-breakdown/v2.json"
-    )
+    fakes[
+        "artifact_store"
+    ].save_work_breakdown_json.return_value = "dev/abc-123/work-breakdown/v2.json"
 
     response = client.post(
         "/requirements-runs/abc-123/work-breakdown/refine",
@@ -394,9 +394,9 @@ def test_get_work_breakdown_version_returns_the_stored_version(
     client: TestClient, fakes: dict[str, MagicMock]
 ) -> None:
     fakes["store"].get.return_value = approved_architecture_record()
-    fakes["artifact_store"].get_work_breakdown_json.return_value = (
-        make_breakdown().model_dump_json()
-    )
+    fakes[
+        "artifact_store"
+    ].get_work_breakdown_json.return_value = make_breakdown().model_dump_json()
 
     response = client.get("/requirements-runs/abc-123/work-breakdown/1")
 
@@ -457,9 +457,9 @@ def test_export_work_breakdown_returns_csv(
     fakes["work_breakdown_exporter"].export.return_value = make_export(
         csv_text="feature,story,task\nTask management,Create a task,Add task API\n"
     )
-    fakes["artifact_store"].save_work_breakdown_csv.return_value = (
-        "dev/abc-123/work-breakdown/v1.csv"
-    )
+    fakes[
+        "artifact_store"
+    ].save_work_breakdown_csv.return_value = "dev/abc-123/work-breakdown/v1.csv"
 
     response = client.get("/requirements-runs/abc-123/work-breakdown/export")
 

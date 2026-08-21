@@ -20,17 +20,25 @@ from app.application.ports import (
     ArchitectureValidatorPort,
     ArtifactStorePort,
     DiagramRendererPort,
+    DocumentExporterPort,
     SessionStorePort,
     WorkBreakdownExporterPort,
 )
 from app.application.use_cases.analyze_requirements import AnalyzeRequirementsUseCase
 from app.application.use_cases.classify_image import ClassifyImageUseCase
+from app.application.use_cases.generate_session_technical_design import (
+    ExportSessionTechnicalDesignUseCase,
+    GenerateSessionTechnicalDesignUseCase,
+)
 from app.application.use_cases.generate_session_work_breakdown import (
     ExportSessionWorkBreakdownUseCase,
     GenerateSessionWorkBreakdownUseCase,
 )
 from app.application.use_cases.generate_system_design import (
     GenerateSystemDesignUseCase,
+)
+from app.application.use_cases.generate_technical_design import (
+    GenerateTechnicalDesignUseCase,
 )
 from app.application.use_cases.generate_work_breakdown import (
     GenerateWorkBreakdownUseCase,
@@ -44,6 +52,7 @@ from app.infrastructure.composition import (
     build_image_classifier_use_case,
     build_requirements_use_case,
     build_system_design_use_case,
+    build_technical_design_use_case,
     build_work_breakdown_use_case,
 )
 from app.ingestion import RequirementsDocumentExtractor
@@ -92,6 +101,14 @@ def get_work_breakdown_analyzer() -> GenerateWorkBreakdownUseCase:
 
 
 def get_work_breakdown_exporter() -> WorkBreakdownExporterPort:
+    return build_design_tools_client()
+
+
+def get_technical_design_writer() -> GenerateTechnicalDesignUseCase:
+    return build_technical_design_use_case()
+
+
+def get_document_exporter() -> DocumentExporterPort:
     return build_design_tools_client()
 
 
@@ -253,6 +270,48 @@ def get_work_breakdown_export_dependencies(
 ) -> WorkBreakdownExportDependencies:
     return WorkBreakdownExportDependencies(
         session_use_case=ExportSessionWorkBreakdownUseCase(
+            exporter=exporter, artifact_store=artifact_store
+        )
+    )
+
+
+@dataclass
+class TechnicalDesignGenerationDependencies:
+    """Bundles the services ``generate_technical_design``/
+    ``refine_technical_design`` (``app/api/routes/technical_design.py``)
+    need - the technical-design analogue of
+    ``WorkBreakdownGenerationDependencies``."""
+
+    session_use_case: GenerateSessionTechnicalDesignUseCase
+
+
+def get_technical_design_generation_dependencies(
+    artifact_store: ArtifactStorePort = Depends(get_artifact_store),  # noqa: B008
+    writer: GenerateTechnicalDesignUseCase = Depends(  # noqa: B008
+        get_technical_design_writer
+    ),
+) -> TechnicalDesignGenerationDependencies:
+    return TechnicalDesignGenerationDependencies(
+        session_use_case=GenerateSessionTechnicalDesignUseCase(
+            generator=writer, artifact_store=artifact_store
+        )
+    )
+
+
+@dataclass
+class TechnicalDesignExportDependencies:
+    """Bundles the services ``export_technical_design``
+    (``app/api/routes/technical_design.py``) needs."""
+
+    session_use_case: ExportSessionTechnicalDesignUseCase
+
+
+def get_technical_design_export_dependencies(
+    artifact_store: ArtifactStorePort = Depends(get_artifact_store),  # noqa: B008
+    exporter: DocumentExporterPort = Depends(get_document_exporter),  # noqa: B008
+) -> TechnicalDesignExportDependencies:
+    return TechnicalDesignExportDependencies(
+        session_use_case=ExportSessionTechnicalDesignUseCase(
             exporter=exporter, artifact_store=artifact_store
         )
     )

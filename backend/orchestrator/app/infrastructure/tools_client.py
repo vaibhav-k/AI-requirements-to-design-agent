@@ -75,10 +75,12 @@ from mcp.client.streamable_http import streamable_http_client
 from app.application.errors import (
     ArchitectureValidationError,
     DiagramGenerationError,
+    TechnicalDesignExportError,
     WorkBreakdownExportError,
 )
-from app.domain.design import SystemDesignArtifact
+from app.domain.design import ArchitectureDiagrams, SystemDesignArtifact
 from app.domain.requirements import RequirementsArtifact
+from app.domain.technical_design import TechnicalDesignArtifact, TechnicalDesignExport
 from app.domain.work_breakdown import WorkBreakdownArtifact, WorkBreakdownExport
 from app.infrastructure.sync_bridge import run_sync
 
@@ -112,9 +114,11 @@ def _run_coro(coro: Coroutine[object, object, T]) -> T:
     with ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(asyncio.run, coro).result()
 
+
 _GENERATE_DIAGRAM_TOOL = "generate_architecture_diagram_tool"
 _VALIDATE_DESIGN_TOOL = "validate_system_design_tool"
 _EXPORT_WORK_BREAKDOWN_TOOL = "export_work_breakdown_tool"
+_EXPORT_TECHNICAL_DESIGN_TOOL = "export_technical_design_tool"
 
 
 def _extract_envelope(result: Any) -> dict[str, Any]:
@@ -154,8 +158,8 @@ def _extract_envelope(result: Any) -> dict[str, Any]:
 
 class McpToolsClient:
     """Implements ``DiagramRendererPort``, ``ArchitectureValidatorPort``,
-    and ``WorkBreakdownExporterPort`` by calling the design-tools MCP
-    gateway.
+    ``WorkBreakdownExporterPort``, and ``DocumentExporterPort`` by calling
+    the design-tools MCP gateway.
 
     Constructed once by ``app.infrastructure.composition
     .build_design_tools_client`` and shared across call sites the same way
@@ -191,8 +195,14 @@ class McpToolsClient:
 
     # -- DiagramRendererPort -------------------------------------------------
 
-    def generate(self, design: SystemDesignArtifact) -> str:
-        """Render ``design`` as an SVG diagram via the design-tools gateway.
+    def generate(
+        self,
+        design: SystemDesignArtifact,
+        version: int,
+        generated_at: str,
+    ) -> ArchitectureDiagrams:
+        """Render ``design`` as both required architecture diagrams via
+        the design-tools gateway.
 
         Raises ``DiagramGenerationError`` if tools-service reports a
         rendering failure (or if the gateway/tools-service can't be
@@ -200,7 +210,16 @@ class McpToolsClient:
         """
 
         try:
-            envelope = _run_coro(self._call_tool(_GENERATE_DIAGRAM_TOOL, design))
+            envelope = _run_coro(
+                self._call_payload_tool(
+                    _GENERATE_DIAGRAM_TOOL,
+                    {
+                        "design_json": design.model_dump_json(),
+                        "version": version,
+                        "generated_at": generated_at,
+                    },
+                )
+            )
         except Exception as exc:  # noqa: BLE001 - re-raised as the port's own error type
             raise DiagramGenerationError(
                 f"Failed to reach the design-tools service for diagram rendering: {exc}"
@@ -212,13 +231,18 @@ class McpToolsClient:
             )
             raise DiagramGenerationError(detail)
 
-        svg = envelope.get("body", {}).get("svg")
-        if not svg:
+        body = envelope.get("body", {})
+        logical_svg = body.get("logical_svg")
+        azure_svg = body.get("azure_mapping_svg")
+        if not logical_svg or not azure_svg:
             raise DiagramGenerationError(
-                "design-tools service reported success but returned no SVG content."
+                "design-tools service reported success but returned no "
+                "SVG content for one or both diagrams."
             )
 
-        return str(svg)
+        return ArchitectureDiagrams(
+            logical_svg=str(logical_svg), azure_mapping_svg=str(azure_svg)
+        )
 
     # -- ArchitectureValidatorPort --------------------------------------------
 
@@ -300,3 +324,57 @@ class McpToolsClient:
             )
 
         return WorkBreakdownExport.model_validate(export)
+
+    # -- DocumentExporterPort -------------------------------------------------
+
+    def export_document(
+        self,
+        document: TechnicalDesignArtifact,
+        design: SystemDesignArtifact,
+        requirements: RequirementsArtifact,
+        work_breakdown: WorkBreakdownArtifact,
+    ) -> TechnicalDesignExport:
+        """Render ``document`` (with ``design``'s architecture diagram
+        embedded) to ``.docx`` via the design-tools gateway.
+
+        Named ``export_document`` rather than ``export`` (unlike
+        ``WorkBreakdownExporterPort.export`` above) only because this one
+        class implements two different "export" ports at once -
+        ``app.application.ports.DocumentExporterPort.export`` is still the
+        protocol method name this satisfies; see that Protocol's
+        definition. Raises ``TechnicalDesignExportError`` if tools-service
+        reports a rendering failure (or if the gateway/tools-service can't
+        be reached at all).
+        """
+
+        payload = {
+            "document_json": document.model_dump_json(),
+            "design_json": design.model_dump_json(),
+            "requirements_json": requirements.model_dump_json(),
+            "work_breakdown_json": work_breakdown.model_dump_json(),
+        }
+
+        try:
+            envelope = _run_coro(
+                self._call_payload_tool(_EXPORT_TECHNICAL_DESIGN_TOOL, payload)
+            )
+        except Exception as exc:  # noqa: BLE001 - re-raised as the port's own error type
+            raise TechnicalDesignExportError(
+                f"Failed to reach the design-tools service for technical "
+                f"design export: {exc}"
+            ) from exc
+
+        if not envelope.get("ok", False):
+            detail = envelope.get("body", {}).get(
+                "detail", "Unknown technical design export failure."
+            )
+            raise TechnicalDesignExportError(detail)
+
+        export = envelope.get("body")
+        if not export:
+            raise TechnicalDesignExportError(
+                "design-tools service reported success but returned no "
+                "technical design export."
+            )
+
+        return TechnicalDesignExport.model_validate(export)

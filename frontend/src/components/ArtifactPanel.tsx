@@ -2,10 +2,12 @@ import { useEffect, useState } from "react"
 
 import { describeError, useRequirementsApi } from "../api"
 import { useVersionedArtifact } from "../hooks/useVersionedArtifact"
+import { downloadSvgAsPng } from "../lib/exportDiagram"
 import type {
   RequirementsArtifact,
   RequirementsRunView,
   SystemDesignArtifact,
+  TechnicalDesignArtifact,
   WorkBreakdownArtifact,
 } from "../types"
 import { ArchitectureView } from "./ArchitectureView"
@@ -13,10 +15,15 @@ import { DiagramViewer } from "./DiagramViewer"
 import { ErrorBanner } from "./ErrorBanner"
 import { RequirementsEditor } from "./RequirementsEditor"
 import { RequirementsView } from "./RequirementsView"
+import { TechnicalDesignView } from "./TechnicalDesignView"
 import { VersionBar } from "./VersionBar"
 import { WorkBreakdownView } from "./WorkBreakdownView"
 
-export type ArtifactTab = "requirements" | "architecture" | "work_breakdown"
+export type ArtifactTab =
+  | "requirements"
+  | "architecture"
+  | "work_breakdown"
+  | "technical_design"
 
 interface ArtifactPanelProps {
   sessionId: string
@@ -32,6 +39,7 @@ interface ArtifactPanelProps {
    * `app/api/routes/work_breakdown.py`'s `_require_architecture_approved`). */
   architectureApproved: boolean
   hasWorkBreakdown: boolean
+  hasTechnicalDesign: boolean
   /** Which tab is shown. Lifted up to Workspace rather than kept as local
    * state here, so Workspace can switch to the Architecture tab itself the
    * moment `accept` persists a design - see Workspace.tsx's handleAccept. */
@@ -58,6 +66,7 @@ export function ArtifactPanel({
   hasArchitecture,
   architectureApproved,
   hasWorkBreakdown,
+  hasTechnicalDesign,
   activeTab: tab,
   onTabChange: setTab,
   currentRequirements,
@@ -86,6 +95,12 @@ export function ArtifactPanel({
     listVersions: api.listWorkBreakdownVersions,
     getVersion: api.getWorkBreakdownVersion,
   })
+  const technicalDesignHistory = useVersionedArtifact<TechnicalDesignArtifact>({
+    sessionId,
+    refreshKey,
+    listVersions: api.listTechnicalDesignVersions,
+    getVersion: api.getTechnicalDesignVersion,
+  })
 
   const [exportError, setExportError] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
@@ -101,6 +116,27 @@ export function ArtifactPanel({
       .finally(() => setExporting(false))
   }
 
+  const [docxExportError, setDocxExportError] = useState<string | null>(null)
+  const [exportingDocx, setExportingDocx] = useState(false)
+
+  const handleExportDocx = () => {
+    setDocxExportError(null)
+    setExportingDocx(true)
+    api
+      .exportTechnicalDesignDocx(sessionId)
+      .catch((err: unknown) => {
+        setDocxExportError(
+          `Could not export the technical design document: ${describeError(err)}`,
+        )
+      })
+      .finally(() => setExportingDocx(false))
+  }
+
+  // The architecture-generation phase always renders two complementary
+  // diagrams (see README) - the technology-agnostic Logical Architecture
+  // Diagram and the Azure Service Mapping Diagram - so this tab toggles
+  // between the two rather than only ever showing one.
+  const [diagramKind, setDiagramKind] = useState<"logical" | "azure">("logical")
   const [diagram, setDiagram] = useState<string | null>(null)
   const [diagramError, setDiagramError] = useState<string | null>(null)
 
@@ -111,19 +147,33 @@ export function ArtifactPanel({
     let cancelled = false
     setDiagram(null)
     setDiagramError(null)
-    api
-      .getArchitectureDiagram(sessionId, architectureHistory.selected)
+    const fetchDiagram =
+      diagramKind === "logical" ? api.getArchitectureDiagram : api.getAzureMappingDiagram
+    fetchDiagram(sessionId, architectureHistory.selected)
       .then((svg) => {
         if (!cancelled) setDiagram(svg)
       })
       .catch((err: unknown) => {
         if (cancelled) return
-        setDiagramError(`Could not load the diagram: ${describeError(err)}`)
+        const label = diagramKind === "logical" ? "Logical Architecture" : "Azure Service Mapping"
+        setDiagramError(`Could not load the ${label} diagram: ${describeError(err)}`)
       })
     return () => {
       cancelled = true
     }
-  }, [sessionId, tab, architectureHistory.selected, api])
+  }, [sessionId, tab, architectureHistory.selected, diagramKind, api])
+
+  const [diagramDownloadError, setDiagramDownloadError] = useState<string | null>(null)
+
+  const handleDownloadDiagramPng = () => {
+    if (!diagram) return
+    setDiagramDownloadError(null)
+    const suffix = diagramKind === "logical" ? "logical" : "azure-mapping"
+    const version = architectureHistory.selected ?? "latest"
+    downloadSvgAsPng(diagram, `architecture-v${version}-${suffix}.png`, {
+      onError: setDiagramDownloadError,
+    })
+  }
 
   return (
     <div className="artifact-panel">
@@ -150,6 +200,14 @@ export function ArtifactPanel({
           onClick={() => setTab("work_breakdown")}
         >
           Task Planning
+        </button>
+        <button
+          type="button"
+          className={tab === "technical_design" ? "tab active" : "tab"}
+          disabled={!hasWorkBreakdown}
+          onClick={() => setTab("technical_design")}
+        >
+          Technical Design
         </button>
       </div>
 
@@ -218,8 +276,31 @@ export function ArtifactPanel({
                   highlightedComponentId={highlighted}
                 />
                 <div className="diagram-column">
+                  <div className="tab-row diagram-kind-row">
+                    <button
+                      type="button"
+                      className={diagramKind === "logical" ? "tab active" : "tab"}
+                      onClick={() => setDiagramKind("logical")}
+                    >
+                      Logical Architecture
+                    </button>
+                    <button
+                      type="button"
+                      className={diagramKind === "azure" ? "tab active" : "tab"}
+                      onClick={() => setDiagramKind("azure")}
+                    >
+                      Azure Service Mapping
+                    </button>
+                  </div>
                   {diagramError && <ErrorBanner message={diagramError} />}
-                  {diagram && <DiagramViewer svg={diagram} onInspect={setHighlighted} />}
+                  {diagramDownloadError && <ErrorBanner message={diagramDownloadError} />}
+                  {diagram && (
+                    <DiagramViewer
+                      svg={diagram}
+                      onInspect={setHighlighted}
+                      onDownloadPng={handleDownloadDiagramPng}
+                    />
+                  )}
                   {!diagram && !diagramError && <p className="muted">Loading diagram…</p>}
                 </div>
               </div>
@@ -267,6 +348,60 @@ export function ArtifactPanel({
             {workBreakdownHistory.data && <WorkBreakdownView data={workBreakdownHistory.data} />}
             {workBreakdownHistory.compareData && (
               <WorkBreakdownView data={workBreakdownHistory.compareData} />
+            )}
+          </>
+        ))}
+
+      {tab === "technical_design" &&
+        (!hasWorkBreakdown ? (
+          <p className="muted">
+            The work breakdown must exist before a technical design document can be
+            generated.
+          </p>
+        ) : !hasTechnicalDesign ? (
+          <p className="muted">
+            No technical design document generated yet - use "Generate technical
+            design" in the conversation once the work breakdown exists.
+          </p>
+        ) : (
+          <>
+            <div className="panel-header">
+              <VersionBar
+                versions={technicalDesignHistory.versions}
+                selected={technicalDesignHistory.selected}
+                onSelect={technicalDesignHistory.setSelected}
+                compareWith={technicalDesignHistory.compareWith}
+                onCompareChange={technicalDesignHistory.setCompareWith}
+                latestVersion={technicalDesignHistory.versions.at(-1) ?? null}
+              />
+              <button type="button" onClick={handleExportDocx} disabled={exportingDocx}>
+                {exportingDocx ? "Exporting…" : "Export DOCX"}
+              </button>
+            </div>
+            {docxExportError && (
+              <ErrorBanner
+                message={docxExportError}
+                onDismiss={() => setDocxExportError(null)}
+              />
+            )}
+            {technicalDesignHistory.error && (
+              <ErrorBanner message={technicalDesignHistory.error} />
+            )}
+            {technicalDesignHistory.loading && !technicalDesignHistory.data && (
+              <p className="muted">Loading…</p>
+            )}
+            {technicalDesignHistory.data && technicalDesignHistory.compareData && (
+              <p className="muted">
+                Comparing v{technicalDesignHistory.compareWith} (below) against v
+                {technicalDesignHistory.selected} (above) - side-by-side diffing isn't
+                supported for technical design documents yet.
+              </p>
+            )}
+            {technicalDesignHistory.data && (
+              <TechnicalDesignView data={technicalDesignHistory.data} />
+            )}
+            {technicalDesignHistory.compareData && (
+              <TechnicalDesignView data={technicalDesignHistory.compareData} />
             )}
           </>
         ))}

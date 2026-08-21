@@ -93,3 +93,23 @@ class WorkBreakdownExportError(RuntimeError):
     analogue of ``DiagramGenerationError``/``ArchitectureValidationError``
     above.
     """
+
+
+class TechnicalDesignGenerationError(RuntimeError):
+    """Raised when technical-design-document generation or refinement fails.
+
+    Raised by ``app.infrastructure.agents.technical_writer_agent
+    .AgentFrameworkTechnicalWriterAgent`` - the technical-design analogue
+    of ``WorkBreakdownGenerationError``.
+    """
+
+
+class TechnicalDesignExportError(RuntimeError):
+    """Raised when ``DocumentExporterPort.export`` fails to render a
+    technical design document to ``.docx``.
+
+    Raised by ``app.infrastructure.tools_client.McpToolsClient`` when the
+    remote call to ``backend/tools-service`` (via ``backend/mcp-wrapper``)
+    fails or reports a rendering failure - the technical-design analogue
+    of ``WorkBreakdownExportError``.
+    """

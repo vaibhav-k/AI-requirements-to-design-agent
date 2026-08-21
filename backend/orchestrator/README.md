@@ -55,6 +55,27 @@ conversationally, and download the CSV). CLI support is still open -
 see "Next Steps" → "Work Breakdown Agent" for the full spec and
 architecture, and for that remaining gap.
 
+Also orthogonal to the roadmap: a **fifth and final session stage,
+Technical Design (the Technical Writer Agent), is now fully wired end
+to end.** Given an approved `RequirementsArtifact` +
+`SystemDesignArtifact` + `WorkBreakdownArtifact`, it compiles a
+structured, sectioned technical design document (executive summary,
+architecture overview with the diagram embedded, components, interfaces,
+cross-cutting concerns, and an implementation-work summary) and renders
+it, on demand, to a downloadable `.docx` file with a Word Table of
+Contents field, the approved architecture diagram (re-rendered to PNG,
+since `.docx` can't embed the SVG the Architecture tab uses), and a
+requirements traceability appendix. It's reachable three ways: the
+external MCP server's `generate_technical_design`/
+`refine_technical_design`/`export_technical_design_docx` tools, the web
+API's `POST/GET /requirements-runs/{id}/technical-design[/refine|
+/versions|/{version}|/export]` routes (gated on the session having
+reached the `work_breakdown` stage, with the same "generating"
+double-submission guard every other stage uses), and the frontend's new
+"Technical Design" tab (appears once a work breakdown exists, lets you
+generate, refine conversationally, and download the `.docx`). CLI
+support is open, same gap as the Work Breakdown Agent above.
+
 Capabilities implemented so far:
 
 * Natural-language requirements input
@@ -139,6 +160,20 @@ Capabilities implemented so far:
   frontend's "Task Planning" tab (generate, refine, export CSV - appears
   once architecture is approved) - see "Next Steps" → "Work Breakdown
   Agent" below
+* Technical Writer Agent (Technical Design) - a fifth and final
+  Microsoft Agent Framework-backed session stage that compiles an
+  approved requirements + architecture + work breakdown triple into a
+  structured, sectioned technical design document, plus a deterministic,
+  LLM-free `.docx` exporter (`backend/tools-service`) that renders it
+  with a Word Table of Contents field, the approved architecture diagram
+  embedded (re-rendered to PNG), and a requirements traceability
+  appendix. Reachable via the external MCP server's
+  `generate_technical_design`/`refine_technical_design`/
+  `export_technical_design_docx` tools, via the web API's
+  `/requirements-runs/{id}/technical-design` routes, and via the
+  frontend's "Technical Design" tab (generate, refine, export `.docx` -
+  appears once a work breakdown exists) - see "Next Steps" → "Technical
+  Design (Technical Writer Agent)" below
 * Automated tests
 * mypy type checking
 * Ruff linting
@@ -367,12 +402,48 @@ architecture pipeline, secured with Entra ID (Azure AD).
     (a task with no requirement/architecture traceability at all - the
     one defect `backend/tools-service`'s exporter treats as fatal rather
     than a warning).
+* `app/api/routes/technical_design.py` - the fifth and final session
+  stage, Technical Design, as HTTP endpoints, following the exact same
+  conventions as `work_breakdown.py` above:
+  * `POST /requirements-runs/{id}/technical-design` - generate a
+    document from the session's requirements + architecture + work
+    breakdown (`GenerateSessionTechnicalDesignUseCase`, wrapping the
+    standalone `GenerateTechnicalDesignUseCase` from "Technical Design
+    (Technical Writer Agent)" above). `409` unless the session is in the
+    `"work_breakdown"` stage; `409` if a document already exists for
+    this session (use `/refine` instead); `422` on
+    `TechnicalDesignGenerationError`/`ValueError` (no requirements, no
+    components, no features), reverting the session back to
+    `"work_breakdown"`.
+  * `POST /requirements-runs/{id}/technical-design/refine` - body
+    `{"input": "..."}`; the technical-design analogue of
+    `work-breakdown/refine`: bumps `technical_design_version` and
+    re-generates with the previous document as context. `409` unless
+    the session is already in the `"technical_design"` stage.
+  * `GET /requirements-runs/{id}/technical-design` - the current
+    `TechnicalDesignArtifact`. `404` if none has been generated yet.
+  * `GET /requirements-runs/{id}/technical-design/versions` /
+    `GET /requirements-runs/{id}/technical-design/{version}` - the same
+    version-history pattern, backed by the same immutable,
+    `overwrite=False` Blob layout
+    (`{env}/{session_id}/technical-design/v{n}.json`).
+  * `GET /requirements-runs/{id}/technical-design/export` - calls
+    `ExportSessionTechnicalDesignUseCase` (the web-API-facing wrapper
+    around `DocumentExporterPort`/`McpToolsClient.export_document`, the
+    same port the external MCP server's `export_technical_design_docx`
+    tool uses) and returns the rendered `.docx` as
+    `application/vnd.openxmlformats-officedocument.wordprocessingml.document`,
+    caching it in Blob Storage (`.../technical-design/v{n}.docx`)
+    alongside the JSON artifact. `409` if no document exists yet; `422`
+    on `TechnicalDesignExportError` (no sections at all - the one defect
+    `backend/tools-service`'s exporter treats as fatal rather than a
+    warning).
 * `app/web/main.py` - the FastAPI app itself: CORS middleware, a public
   `/health` liveness probe, a `/me` endpoint that proves the auth wiring
   works end-to-end, a `lifespan` that starts the Cosmos session store and
   the Blob artifact store once at startup, and the `requirements`,
-  `artifacts`, and `work_breakdown` routers registered with
-  `dependencies=[Depends(require_user)]`.
+  `artifacts`, `work_breakdown`, and `technical_design` routers
+  registered with `dependencies=[Depends(require_user)]`.
 
 **Graceful shutdown:** on `Ctrl+C`, a `--reload` restart, or a real
 `SIGTERM`, the `lifespan`'s `finally` block closes both the Cosmos session
@@ -813,7 +884,12 @@ quick manual API testing, but aren't a product surface.
   `POST .../work-breakdown/refine` instead, following the exact same
   `handleSend` stage-branching pattern used for architecture refinement;
   see "Roadmap" → "Task Planning (Work Breakdown Agent)" and "Next Steps"
-  → "16. Work Breakdown Agent" below.
+  → "16. Work Breakdown Agent" below. Once a work breakdown exists, a
+  "Generate technical design" action appears the same way, and once a
+  technical design document exists, chat input for a session in the
+  `"technical_design"` stage is routed to `POST
+  .../technical-design/refine` instead - the same branching pattern one
+  stage further; see "Technical Design (Technical Writer Agent)" below.
   While the session is still in (or hasn't yet reached) the requirements
   stage, a **Scan a file** button sits alongside Send: it opens a file
   picker restricted to the supported extensions
@@ -836,9 +912,10 @@ quick manual API testing, but aren't a product surface.
   Sign in above and try again." for a 401 (no token at all) - see
   `Workspace.tsx`'s `friendlyErrorMessage`.
 * **Artifacts** (`ArtifactPanel.tsx`) - tabs for Requirements,
-  Architecture, and **Task Planning**, the first two backed by
-  `app/api/routes/artifacts.py` and the third by the new
-  `app/api/routes/work_breakdown.py`:
+  Architecture, **Task Planning**, and **Technical Design**, the first
+  two backed by `app/api/routes/artifacts.py`, the third by
+  `app/api/routes/work_breakdown.py`, and the fourth by
+  `app/api/routes/technical_design.py`:
   * `RequirementsView.tsx` - summary, business goal, actors,
     functional/non-functional requirements, data/integration requirements,
     constraints, assumptions, and open questions, with IDs, for the
@@ -871,13 +948,28 @@ quick manual API testing, but aren't a product surface.
     **Export CSV** button lives in `ArtifactPanel.tsx` alongside this
     tab's version selector, calling
     `GET .../work-breakdown/export` and downloading the response.
+  * `TechnicalDesignView.tsx` - a pure display component (same "no API
+    calls of its own" shape as the other artifact views) rendering the
+    flat, leveled `DesignSection` list as an actual document preview:
+    each section's heading depth (1-3) maps onto an `h2`/`h3`/`h4`, in
+    that order prose body, bullets, numbered steps, and an optional
+    table render exactly as `backend/tools-service`'s
+    `document_export.py` orders them into the exported `.docx`, and the
+    section flagged `include_diagram` shows a placeholder note (the
+    real diagram only exists in the downloaded file, not this preview).
+    The tab stays disabled until the session has a work breakdown, and
+    shows an empty state pointing at the "Generate technical design"
+    action (in Conversation, not here) until a document exists. An
+    **Export DOCX** button lives in `ArtifactPanel.tsx` alongside this
+    tab's version selector, calling `GET .../technical-design/export`
+    and downloading the response.
   * `VersionBar.tsx` - switch which persisted version is shown, and
-    optionally pick a second version to compare against. Reused for the
-    Task Planning tab's version history the same way it's used for
-    Requirements/Architecture, though a full field-level diff
-    (`DiffList.tsx`, below) isn't implemented for work-breakdown versions
-    yet - selecting a compare version there just renders both versions
-    stacked.
+    optionally pick a second version to compare against. Reused for both
+    the Task Planning and Technical Design tabs' version history the
+    same way it's used for Requirements/Architecture, though a full
+    field-level diff (`DiffList.tsx`, below) isn't implemented for
+    work-breakdown or technical-design versions yet - selecting a
+    compare version there just renders both versions stacked.
   * When a compare version is selected on the Requirements or
     Architecture tab, both views switch to a side-by-side field diff
     (`lib/diff.ts`'s `diffByKey`/`diffStringList` + `DiffList.tsx`) -
@@ -1077,9 +1169,10 @@ backend/orchestrator/    (this directory) - owns all state and every LLM
                           live here.
 
 backend/mcp-wrapper/      A thin internal MCP gateway. Exposes exactly
-                          three tools - generate_architecture_diagram_tool,
-                          validate_system_design_tool, and
-                          export_work_breakdown_tool - that translate an
+                          four tools - generate_architecture_diagram_tool,
+                          validate_system_design_tool,
+                          export_work_breakdown_tool, and
+                          export_technical_design_tool - that translate an
                           MCP tool call into a plain REST call against
                           backend/tools-service. No business logic lives
                           here; see its own README/module docstrings.
@@ -1092,14 +1185,15 @@ backend/tools-service/    The deterministic, LLM-free logic that used to
                           app.design.validator.ArchitectureValidator) -
                           plus work-breakdown CSV export and requirement/
                           architecture ID traceability validation
-                          (WorkBreakdownExporter), which never had an
-                          in-process home to begin with. Plain FastAPI
-                          REST endpoints - no MCP awareness at all, and
-                          no LLM calls.
+                          (WorkBreakdownExporter) and technical-design
+                          `.docx` export (TechnicalDesignExporter), both
+                          of which never had an in-process home to begin
+                          with. Plain FastAPI REST endpoints - no MCP
+                          awareness at all, and no LLM calls.
 ```
 
-The call path for a diagram render, a validation, or a work-breakdown
-export is:
+The call path for a diagram render, a validation, a work-breakdown
+export, or a technical-design export is:
 
 ```text
 orchestrator                    mcp-wrapper                  tools-service
@@ -1107,8 +1201,9 @@ orchestrator                    mcp-wrapper                  tools-service
 app.infrastructure
 .tools_client.McpToolsClient
   (implements DiagramRendererPort,
-  ArchitectureValidatorPort, and
-  WorkBreakdownExporterPort)
+  ArchitectureValidatorPort,
+  WorkBreakdownExporterPort, and
+  DocumentExporterPort)
         │
         │ mcp.client.streamable_http
         │ + mcp.ClientSession
@@ -1116,28 +1211,31 @@ app.infrastructure
                           FastMCP "design-tools" server
                           (generate_architecture_diagram_tool /
                           validate_system_design_tool /
-                          export_work_breakdown_tool)
+                          export_work_breakdown_tool /
+                          export_technical_design_tool)
                                   │
                                   │ httpx (plain REST)
                                   ▼
                                                         POST /tools/diagrams/generate
                                                         POST /tools/designs/validate
                                                         POST /tools/work-breakdown/export
+                                                        POST /tools/technical-design/export
 ```
 
 `McpToolsClient` is the only thing in the orchestrator that knows the
 design-tools gateway exists - everything above it (`ArchitectureSession`,
 the API routes, the CLI, the kept external MCP server) still just calls
 `DiagramRendererPort.generate(...)`/`ArchitectureValidatorPort.validate(...)`/
-`WorkBreakdownExporterPort.export(...)` exactly as it did when the first
-two were in-process classes (the third never was one). mcp-wrapper's
-tools never raise on a tools-service-level failure (a 422 for an invalid
-diagram spec, a failed validation, or an untraceable work item is an
-expected outcome, not a transport error) - they always return an
-envelope, `{"ok": bool, "status_code": int, "body": {...}}`, and
-`McpToolsClient` is what turns a `False` `"ok"` into the same
-`DiagramGenerationError`/`ArchitectureValidationError`/
-`WorkBreakdownExportError` these ports always raised. See
+`WorkBreakdownExporterPort.export(...)`/`DocumentExporterPort.export_document(...)`
+exactly as it did when the first two were in-process classes (the other
+two never were). mcp-wrapper's tools never raise on a tools-service-level
+failure (a 422 for an invalid diagram spec, a failed validation, an
+untraceable work item, or a sectionless document is an expected outcome,
+not a transport error) - they always return an envelope, `{"ok": bool,
+"status_code": int, "body": {...}}`, and `McpToolsClient` is what turns a
+`False` `"ok"` into the same `DiagramGenerationError`/
+`ArchitectureValidationError`/`WorkBreakdownExportError`/
+`TechnicalDesignExportError` these ports always raised. See
 `backend/mcp-wrapper/src/design_tools_wrapper/application
 /tool_calls.py`'s module docstring for the full rationale.
 
@@ -1308,6 +1406,9 @@ orchestrator/
 │   │   ├── design.py                 # DesignComponent/.../SystemDesignArtifact
 │   │   ├── work_breakdown.py         # WorkBreakdownTask/Story/Feature/Artifact/Export,
 │   │   │                             # EffortEstimate (XS/S/M/L/XL), AmbiguityKind
+│   │   ├── technical_design.py       # DesignSection/DesignTable/
+│   │   │                             # TechnicalDesignArtifact/Export,
+│   │   │                             # MAX_SECTION_LEVEL
 │   │   ├── vision.py                 # ImageClassification
 │   │   └── session.py                # SessionRecord
 │   │
@@ -1317,12 +1418,14 @@ orchestrator/
 │   │   │                             # ImageClassifierPort/DiagramImageInterpreterPort/
 │   │   │                             # ArtifactStorePort/SessionStorePort/
 │   │   │                             # DiagramRendererPort/ArchitectureValidatorPort/
-│   │   │                             # WorkBreakdownAgentPort/WorkBreakdownExporterPort
+│   │   │                             # WorkBreakdownAgentPort/WorkBreakdownExporterPort/
+│   │   │                             # TechnicalWriterAgentPort/DocumentExporterPort
 │   │   ├── errors.py                 # DesignGenerationError/ImageClassificationError/
 │   │   │                             # DiagramInterpretationError/
 │   │   │                             # ArtifactVersionConflict/SessionConflictError/
 │   │   │                             # DiagramGenerationError/ArchitectureValidationError/
-│   │   │                             # WorkBreakdownGenerationError/WorkBreakdownExportError
+│   │   │                             # WorkBreakdownGenerationError/WorkBreakdownExportError/
+│   │   │                             # TechnicalDesignGenerationError/TechnicalDesignExportError
 │   │   └── use_cases/
 │   │       ├── __init__.py
 │   │       ├── analyze_requirements.py
@@ -1332,6 +1435,12 @@ orchestrator/
 │   │       │                                   # app/api/routes/work_breakdown.py -
 │   │       │                                   # generate/refine + version-bump + persist,
 │   │       │                                   # plus ExportSessionWorkBreakdownUseCase
+│   │       ├── generate_technical_design.py   # standalone: requirements+design+
+│   │       │                                   # work_breakdown -> artifact
+│   │       ├── generate_session_technical_design.py  # session-aware wrapper used
+│   │       │                                   # by app/api/routes/technical_design.py -
+│   │       │                                   # generate/refine + version-bump + persist,
+│   │       │                                   # plus ExportSessionTechnicalDesignUseCase
 │   │       ├── classify_image.py
 │   │       └── interpret_diagram_image.py
 │   │
@@ -1358,9 +1467,10 @@ orchestrator/
 │   │   ├── __init__.py
 │   │   ├── session_store.py   # CosmosSessionStore - concrete SessionStorePort
 │   │   ├── artifact_store.py  # ArtifactStore - concrete ArtifactStorePort;
-│   │   │                      # now also the work-breakdown JSON/CSV half of
+│   │   │                      # now also the work-breakdown JSON/CSV and
+│   │   │                      # technical-design JSON/docx halves of
 │   │   │                      # ArtifactStorePort (immutable v{n}.json, an
-│   │   │                      # overwriting derived v{n}.csv cache)
+│   │   │                      # overwriting derived v{n}.csv/v{n}.docx cache)
 │   │   ├── composition.py   # composition root - builds each *UseCase
 │   │   │                    # wired to a real Microsoft Agent Framework
 │   │   │                    # adapter, reading AZURE_OPENAI_* once here
@@ -1368,8 +1478,9 @@ orchestrator/
 │   │   │                    # execute() into a sync call for the CLI/MCP/
 │   │   │                    # sync FastAPI routes
 │   │   ├── tools_client.py  # McpToolsClient - concrete DiagramRendererPort
-│   │   │                    # + ArchitectureValidatorPort, reaching
-│   │   │                    # backend/mcp-wrapper -> backend/tools-service
+│   │   │                    # + ArchitectureValidatorPort +
+│   │   │                    # WorkBreakdownExporterPort + DocumentExporterPort,
+│   │   │                    # reaching backend/mcp-wrapper -> backend/tools-service
 │   │   │                    # over MCP; see "Service Architecture" above
 │   │   └── agents/
 │   │       ├── __init__.py
@@ -1379,6 +1490,8 @@ orchestrator/
 │   │       ├── diagram_image_interpreter_agent.py # Microsoft Agent Framework adapter
 │   │       ├── work_breakdown_agent.py  # Microsoft Agent Framework adapter -
 │   │       │                            # concrete WorkBreakdownAgentPort
+│   │       ├── technical_writer_agent.py  # Microsoft Agent Framework adapter -
+│   │       │                            # concrete TechnicalWriterAgentPort
 │   │       └── vision_support.py    # shared image-Content-part helper
 │   │
 │   ├── api/
@@ -1389,7 +1502,10 @@ orchestrator/
 │   │       ├── __init__.py
 │   │       ├── requirements.py
 │   │       ├── artifacts.py
-│   │       └── work_breakdown.py     # Task Planning: generate/refine/
+│   │       ├── work_breakdown.py     # Task Planning: generate/refine/
+│   │       │                         # fetch/versions/export routes -
+│   │       │                         # see "Web API & Authentication" above
+│   │       └── technical_design.py   # Technical Design: generate/refine/
 │   │                                 # fetch/versions/export routes -
 │   │                                 # see "Web API & Authentication" above
 │   │
@@ -1416,13 +1532,22 @@ orchestrator/
 │   ├── test_infrastructure_sync_bridge.py
 │   ├── test_generate_work_breakdown_use_case.py
 │   ├── test_infrastructure_work_breakdown_agent.py
+│   ├── test_generate_technical_design_use_case.py
+│   ├── test_infrastructure_technical_writer_agent.py
 │   ├── test_tools_client.py        # McpToolsClient: diagram/validate/
 │   │                                 # export_work_breakdown, all three
-│   │                                 # error-envelope paths
+│   │                                 # error-envelope paths (no dedicated
+│   │                                 # export_document/technical-design case
+│   │                                 # here yet - that path is currently only
+│   │                                 # covered at the route level, in
+│   │                                 # test_technical_design_routes.py, and
+│   │                                 # at the mcp-wrapper level)
 │   ├── test_design_storage.py
 │   ├── test_design_comparison.py
 │   ├── test_mcp.py                 # generate/refine/export_work_breakdown_csv
-│   │                                 # tools + the work-breakdown://schema resource,
+│   │                                 # + generate/refine/export_technical_design
+│   │                                 # tools, and the work-breakdown://schema +
+│   │                                 # technical-design://schema resources,
 │   │                                 # alongside the pre-existing tool tests
 │   ├── test_auth.py
 │   ├── test_rbac.py
@@ -1431,7 +1556,8 @@ orchestrator/
 │   ├── test_session_store.py
 │   ├── test_requirements_routes.py
 │   ├── test_artifacts_routes.py
-│   └── test_work_breakdown_routes.py
+│   ├── test_work_breakdown_routes.py
+│   └── test_technical_design_routes.py
 │
 ├── .github/
 │   └── workflows/
@@ -2192,14 +2318,15 @@ Application services
         ├── Requirements refinement
         ├── System design generation
         ├── System design refinement
-        └── Work breakdown generation / refinement / CSV export
+        ├── Work breakdown generation / refinement / CSV export
+        └── Technical design document generation / refinement / .docx export
 ```
 
-This prevents MCP-specific implementation details from leaking into the core requirements, design, and work-breakdown models.
+This prevents MCP-specific implementation details from leaking into the core requirements, design, work-breakdown, and technical-design models.
 
 **Tools exposed today**, covering the full requirements → architecture →
-work-breakdown flow end to end through MCP alone (no need to call the
-analyzers directly outside it):
+work-breakdown → technical-design flow end to end through MCP alone (no
+need to call the analyzers directly outside it):
 
 * `analyze_requirements(user_input)` - the entry point: free-text input in,
   a structured `RequirementsArtifact` JSON out.
@@ -2234,9 +2361,27 @@ analyzers directly outside it):
   reports covered/unmapped/fabricated requirement and architecture IDs
   so a caller can catch a hallucinated ID before importing the CSV into
   Monday.com/Azure DevOps.
-* Resources: `requirements://schema`, `design://schema`, and
-  `work-breakdown://schema` - the JSON Schema for each artifact type, so
-  a client can introspect the shape it's working with.
+* `generate_technical_design(requirements_json, design_json, work_breakdown_json)`
+  - the Technical Design entry point: a requirements + architecture +
+  work breakdown triple in, a structured `TechnicalDesignArtifact` JSON
+  out (a flat, leveled section list with an executive summary, one
+  section flagged to carry the architecture diagram, and an XS-XL-effort-
+  traceable implementation summary). Same underlying
+  `GenerateTechnicalDesignUseCase` the web API's
+  `POST /requirements-runs/{id}/technical-design` route calls.
+* `refine_technical_design(user_input, requirements_json, design_json, work_breakdown_json, document_json)`
+  - re-generates with the previous document as context, same as the web
+  API's `.../technical-design/refine` endpoint.
+* `export_technical_design_docx(document_json, design_json, requirements_json, work_breakdown_json)`
+  - renders the document as a `.docx` via `backend/tools-service` (over
+  `backend/mcp-wrapper`'s `export_technical_design_tool`), the same path
+  the web API's `.../technical-design/export` route uses - a Word Table
+  of Contents field, the approved architecture diagram re-rendered to
+  PNG and embedded, and a requirements traceability appendix.
+* Resources: `requirements://schema`, `design://schema`,
+  `work-breakdown://schema`, and `technical-design://schema` - the JSON
+  Schema for each artifact type, so a client can introspect the shape
+  it's working with.
 
 This layer is deliberately stateless - every tool takes and returns JSON
 directly, with no session, persistence, or versioning of its own (that's
@@ -2529,7 +2674,52 @@ parallel):
       third artifact-version lineage (`work_breakdown_version`,
       alongside `requirements_version`/`design_version`) without
       resolving the pre-existing CLI/web session-model duplication noted
-      in "Next Development Steps" above; that gap just grew by one field.
+      in "Next Development Steps" above; that gap just grew by one field
+      (now a fourth, `technical_design_version` - see the next section).
+
+## Technical Design (Technical Writer Agent)
+
+Orthogonal to the Milestone 3 checklist above, same as "Task Planning
+(Work Breakdown Agent)" immediately above it - this is the fifth and
+final pipeline stage, building on an approved work breakdown rather than
+extending the architecture stage itself:
+
+* [x] `TechnicalDesignArtifact`/`TechnicalDesignExport` domain models
+      (`app/domain/technical_design.py`) - a flat, ordered list of
+      leveled `DesignSection`s (level 1-3, `MAX_SECTION_LEVEL`) rather
+      than a nested tree, with an optional table per section and exactly
+      one section flagged `include_diagram`
+* [x] Microsoft Agent Framework-backed generation + conversational
+      refinement (`GenerateTechnicalDesignUseCase`,
+      `AgentFrameworkTechnicalWriterAgent`) - modeled on the Work
+      Breakdown Agent's own generate/refine shape, grounding the
+      document in the actual requirements/architecture/work-breakdown
+      JSON handed to it rather than inventing content
+* [x] Deterministic, LLM-free `.docx` export
+      (`backend/tools-service`'s `TechnicalDesignExporter`, adapted from
+      Parnell-AI-Persona-Agent's own document-generation stage for this
+      project's simpler domain shapes - no title/category on
+      `Requirement`, no sprint/story-point concept on
+      `WorkBreakdownArtifact`) - outline numbering derived from each
+      section's `level`, a Word Table of Contents field
+      (`w:updateFields` forces Word to recompute it on open), the
+      approved architecture diagram re-rendered to PNG and embedded
+      (`ArchitectureDiagramGenerator.generate_png`, since `.docx` can't
+      embed the SVG the Architecture tab uses), and a requirements
+      traceability appendix. A diagram render failure degrades to an
+      omitted figure plus a warning rather than failing the whole export.
+* [x] MCP tools - `generate_technical_design`/`refine_technical_design`/
+      `export_technical_design_docx`, plus a `technical-design://schema`
+      resource; see "MCP" above
+* [x] Web API - `POST`/`GET /requirements-runs/{id}/technical-design[/refine|
+      /versions|/{version}|/export]`, gated on the session having
+      reached the `work_breakdown` stage; see "Web API & Authentication"
+      above
+* [x] Frontend - the "Technical Design" tab: generate, refine
+      conversationally, and download the `.docx`, appearing once a work
+      breakdown exists; see "Frontend" above
+* [ ] CLI support - same gap as the Work Breakdown Agent above; the
+      interactive CLI has no "generate technical design" step either.
 
 ## Path to Milestone 3 Completion
 

@@ -1,9 +1,12 @@
 import pytest
 
 from src.domain.design import (
+    Actor,
+    AzureServiceMapping,
     DesignComponent,
     DesignInterface,
     ExternalDependency,
+    SupportingAzureService,
     SystemDesignArtifact,
 )
 from src.infrastructure.validator import (
@@ -135,6 +138,116 @@ def test_unknown_dependency_component_is_rejected() -> None:
                 name="Storage",
                 purpose="Stores documents.",
                 used_by_components=["missing"],
+            )
+        ],
+    )
+
+    with pytest.raises(ArchitectureValidationError):
+        ArchitectureValidator().validate(design)
+
+
+def test_interface_may_terminate_at_an_actor() -> None:
+    """An interface's source/target may reference an `Actor.id`, not only
+    a `DesignComponent.id` - a real user/external-system actor calling
+    into a component, per the architecture-generation phase's
+    "external systems/users" requirement."""
+
+    design = SystemDesignArtifact(
+        architecture_summary="Actor-facing architecture.",
+        components=[
+            DesignComponent(id="api", name="API", responsibility="Handles requests.")
+        ],
+        actors=[
+            Actor(id="end-user", name="End User", kind="user", description="A user.")
+        ],
+        interfaces=[
+            DesignInterface(
+                id="user-api",
+                name="Sign in",
+                purpose="Authenticates.",
+                source_component="end-user",
+                target_component="api",
+            )
+        ],
+    )
+
+    validated = ArchitectureValidator().validate(design)
+    assert validated == design
+
+
+def test_interface_to_unknown_actor_is_rejected() -> None:
+    design = SystemDesignArtifact(
+        architecture_summary="Invalid.",
+        components=[
+            DesignComponent(id="api", name="API", responsibility="Handles requests.")
+        ],
+        interfaces=[
+            DesignInterface(
+                id="user-api",
+                name="Sign in",
+                purpose="Authenticates.",
+                source_component="missing-actor",
+                target_component="api",
+            )
+        ],
+    )
+
+    with pytest.raises(ArchitectureValidationError):
+        ArchitectureValidator().validate(design)
+
+
+def test_azure_mapping_to_unknown_component_is_rejected() -> None:
+    design = SystemDesignArtifact(
+        architecture_summary="Invalid.",
+        components=[
+            DesignComponent(id="api", name="API", responsibility="Handles requests.")
+        ],
+        azure_mappings=[
+            AzureServiceMapping(
+                id="map-1",
+                component_id="missing",
+                azure_service="Azure App Service",
+            )
+        ],
+    )
+
+    with pytest.raises(ArchitectureValidationError):
+        ArchitectureValidator().validate(design)
+
+
+def test_azure_mapping_to_known_component_passes() -> None:
+    design = SystemDesignArtifact(
+        architecture_summary="Valid.",
+        components=[
+            DesignComponent(id="api", name="API", responsibility="Handles requests.")
+        ],
+        azure_mappings=[
+            AzureServiceMapping(
+                id="map-1",
+                component_id="api",
+                azure_service="Azure App Service",
+                rationale="Managed PaaS hosting for the API.",
+            )
+        ],
+    )
+
+    validated = ArchitectureValidator().validate(design)
+    assert validated == design
+
+
+def test_supporting_service_referencing_unknown_component_is_rejected() -> None:
+    design = SystemDesignArtifact(
+        architecture_summary="Invalid.",
+        components=[
+            DesignComponent(id="api", name="API", responsibility="Handles requests.")
+        ],
+        supporting_azure_services=[
+            SupportingAzureService(
+                id="identity",
+                azure_service="Microsoft Entra ID",
+                category="Identity",
+                purpose="Authenticates users.",
+                applies_to_components=["missing"],
             )
         ],
     )

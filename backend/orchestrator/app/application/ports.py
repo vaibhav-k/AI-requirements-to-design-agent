@@ -12,9 +12,10 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from app.domain.design import SystemDesignArtifact
+from app.domain.design import ArchitectureDiagrams, SystemDesignArtifact
 from app.domain.requirements import RequirementsArtifact, StoredArtifact
 from app.domain.session import SessionRecord
+from app.domain.technical_design import TechnicalDesignArtifact, TechnicalDesignExport
 from app.domain.vision import ImageClassification
 from app.domain.work_breakdown import WorkBreakdownArtifact, WorkBreakdownExport
 
@@ -134,9 +135,17 @@ class ArtifactStorePort(Protocol):
         ``None`` if it was never persisted."""
         ...
 
-    def get_design_svg(self, session_id: str, version: int) -> str | None:
-        """The raw architecture diagram SVG markup for one design version,
-        or ``None`` if it was never persisted."""
+    def get_design_svg(
+        self, session_id: str, version: int, kind: str = "logical"
+    ) -> str | None:
+        """The raw architecture diagram SVG markup for one design
+        version, or ``None`` if it was never persisted.
+
+        ``kind`` is ``"logical"`` (the Logical Architecture Diagram -
+        the default, matching every design version persisted before the
+        two-diagram architecture-generation phase existed) or
+        ``"azure"`` (the Azure Service Mapping Diagram).
+        """
         ...
 
     def save_design_json(self, session_id: str, version: int, content: str) -> str:
@@ -147,15 +156,20 @@ class ArtifactStorePort(Protocol):
         """
         ...
 
-    def save_design_svg(self, session_id: str, version: int, content: str) -> str:
-        """Create the SVG for an existing design version."""
+    def save_design_svg(
+        self, session_id: str, version: int, content: str, kind: str = "logical"
+    ) -> str:
+        """Create one of the two SVG diagrams for an existing design
+        version - see ``get_design_svg`` for ``kind``."""
         ...
 
     def delete_design_json(self, session_id: str, version: int) -> None:
         """Delete a design JSON artifact if it exists."""
         ...
 
-    def delete_design_svg(self, session_id: str, version: int) -> None:
+    def delete_design_svg(
+        self, session_id: str, version: int, kind: str = "logical"
+    ) -> None:
         """Delete a design SVG artifact if it exists."""
         ...
 
@@ -212,6 +226,44 @@ class ArtifactStorePort(Protocol):
         """
         ...
 
+    def list_technical_design_versions(self, session_id: str) -> list[int]:
+        """Every technical design version persisted for this session,
+        oldest first - the technical-design analogue of
+        ``list_work_breakdown_versions``."""
+        ...
+
+    def get_technical_design_json(self, session_id: str, version: int) -> str | None:
+        """The raw ``TechnicalDesignArtifact`` JSON for one version, or
+        ``None`` if it was never persisted."""
+        ...
+
+    def save_technical_design_json(
+        self, session_id: str, version: int, content: str
+    ) -> str:
+        """Create a technical design JSON version without overwriting it.
+
+        Raises ``app.application.errors.ArtifactVersionConflict`` if
+        ``version`` already exists for this session - same immutable-once-
+        written contract as ``save_work_breakdown_json``.
+        """
+        ...
+
+    def get_technical_design_docx(self, session_id: str, version: int) -> bytes | None:
+        """The most recently rendered ``.docx`` export for one technical
+        design version, or ``None`` if it was never exported."""
+        ...
+
+    def save_technical_design_docx(
+        self, session_id: str, version: int, content: bytes
+    ) -> str:
+        """Persist (overwriting any previous export) the rendered
+        ``.docx`` for one technical design version.
+
+        Same "derived, re-computable artifact, overwrite rather than
+        conflict" rule as ``save_work_breakdown_csv``.
+        """
+        ...
+
     def close(self) -> None:
         """Release any underlying network resources. Called once, at
         shutdown, by long-running callers (the web API's ``lifespan``)."""
@@ -262,8 +314,20 @@ class DiagramRendererPort(Protocol):
     every call site).
     """
 
-    def generate(self, design: SystemDesignArtifact) -> str:
-        """Render ``design`` as an SVG diagram.
+    def generate(
+        self,
+        design: SystemDesignArtifact,
+        version: int,
+        generated_at: str,
+    ) -> ArchitectureDiagrams:
+        """Render ``design`` as both required architecture diagrams (the
+        Logical Architecture Diagram and the Azure Service Mapping
+        Diagram).
+
+        ``version``/``generated_at`` are stamped into each diagram's
+        deterministic metadata block (never invented) - the design
+        version this render corresponds to, and an ISO timestamp of when
+        it was generated.
 
         Raises ``app.application.errors.DiagramGenerationError`` if
         rendering fails.
@@ -336,5 +400,62 @@ class WorkBreakdownExporterPort(Protocol):
 
         Raises ``app.application.errors.WorkBreakdownExportError`` if the
         tools-service call fails.
+        """
+        ...
+
+
+class TechnicalWriterAgentPort(Protocol):
+    """Turns requirements + architecture + work breakdown into a
+    structured ``TechnicalDesignArtifact``.
+
+    Implemented by ``app.infrastructure.agents.technical_writer_agent
+    .AgentFrameworkTechnicalWriterAgent``, which is backed by Microsoft
+    Agent Framework - the technical-design analogue of
+    ``WorkBreakdownAgentPort``. See
+    ``app.application.use_cases.generate_technical_design``.
+    """
+
+    async def generate(
+        self,
+        requirements: RequirementsArtifact,
+        design: SystemDesignArtifact,
+        work_breakdown: WorkBreakdownArtifact,
+        previous_document: TechnicalDesignArtifact | None = None,
+        refinement_input: str | None = None,
+    ) -> TechnicalDesignArtifact:
+        """Generate (or refine, if ``previous_document`` is given) a
+        technical design document."""
+        ...
+
+
+class DocumentExporterPort(Protocol):
+    """Renders a structured technical design document into a downloadable
+    ``.docx`` file, with the approved architecture diagram embedded.
+
+    Implemented by ``app.infrastructure.tools_client.McpToolsClient`` -
+    the technical-design analogue of ``WorkBreakdownExporterPort`` above,
+    reaching the deterministic, python-docx-backed renderer that lives in
+    ``backend/tools-service`` over the same design-tools MCP path. See
+    README -> "Service Architecture".
+    """
+
+    def export_document(
+        self,
+        document: TechnicalDesignArtifact,
+        design: SystemDesignArtifact,
+        requirements: RequirementsArtifact,
+        work_breakdown: WorkBreakdownArtifact,
+    ) -> TechnicalDesignExport:
+        """Render ``document`` to ``.docx``, embedding the diagram
+        rendered from ``design``.
+
+        Named ``export_document`` rather than ``export`` only because
+        ``McpToolsClient`` implements both this port and
+        ``WorkBreakdownExporterPort`` (whose method is already named
+        ``export``) on the same class - a plain naming collision, not a
+        semantic difference from ``WorkBreakdownExporterPort.export``.
+
+        Raises ``app.application.errors.TechnicalDesignExportError`` if
+        the tools-service call fails.
         """
         ...

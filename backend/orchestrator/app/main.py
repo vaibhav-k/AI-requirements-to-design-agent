@@ -278,7 +278,8 @@ def _accept_and_generate_architecture(
     print("\nSaved design:")
     print(f"  Version: v{design_result.version}")
     print(f"  JSON: {design_result.design_blob}")
-    print(f"  SVG:  {design_result.diagram_blob}")
+    print(f"  Logical diagram SVG: {design_result.diagram_blob}")
+    print(f"  Azure mapping diagram SVG: {design_result.azure_diagram_blob}")
 
     return True
 

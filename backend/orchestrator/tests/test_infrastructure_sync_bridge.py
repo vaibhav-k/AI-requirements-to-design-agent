@@ -28,4 +28,3 @@ def test_run_sync_raises_when_called_from_a_running_event_loop() -> None:
 
     with pytest.raises(RuntimeError, match="running event loop"):
         asyncio.run(call_from_running_loop())
-

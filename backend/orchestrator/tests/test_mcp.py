@@ -3,6 +3,7 @@ import json
 import pytest
 
 from app.domain.design import (
+    ArchitectureDiagrams,
     DesignComponent,
     SystemDesignArtifact,
 )
@@ -215,9 +216,13 @@ class _FakeDesignToolsClient:
         self.validate_calls.append(design)
         return self.design
 
-    def generate(self, design: SystemDesignArtifact) -> str:
+    def generate(
+        self, design: SystemDesignArtifact, version: int, generated_at: str
+    ) -> ArchitectureDiagrams:
         self.generate_calls.append(design)
-        return "<svg></svg>"
+        return ArchitectureDiagrams(
+            logical_svg="<svg>logical</svg>", azure_mapping_svg="<svg>azure</svg>"
+        )
 
 
 @pytest.fixture
@@ -262,9 +267,11 @@ def test_mcp_generate_diagram_tool_validates_then_renders(
 ) -> None:
     design = SystemDesignArtifact(architecture_summary="Valid architecture.")
 
-    svg = mcp_server.generate_architecture_diagram(design.model_dump_json())
+    result = mcp_server.generate_architecture_diagram(design.model_dump_json())
+    parsed = json.loads(result)
 
-    assert svg == "<svg></svg>"
+    assert parsed["logical_svg"] == "<svg>logical</svg>"
+    assert parsed["azure_mapping_svg"] == "<svg>azure</svg>"
     assert len(mock_design_tools_client.validate_calls) == 1
     assert len(mock_design_tools_client.generate_calls) == 1
 

@@ -62,11 +62,19 @@ def test_validate_rejects_invalid_design() -> None:
 
 
 def test_generate_diagram_returns_svg() -> None:
-    response = client.post("/tools/diagrams/generate", json=_VALID_DESIGN)
+    response = client.post(
+        "/tools/diagrams/generate",
+        json={
+            "design": _VALID_DESIGN,
+            "version": 1,
+            "generated_at": "2026-01-01T00:00:00+00:00",
+        },
+    )
 
     assert response.status_code == 200
     body = response.json()
-    assert "<svg" in body["svg"]
+    assert "<svg" in body["logical_svg"]
+    assert "<svg" in body["azure_mapping_svg"]
 
 
 _REQUIREMENTS = {
@@ -161,3 +169,83 @@ def test_export_work_breakdown_rejects_untraceable_task() -> None:
 
     assert response.status_code == 422
     assert "traceability" in response.json()["detail"].lower()
+
+
+_WORK_BREAKDOWN = {
+    "features": [
+        {
+            "feature": "Customer Management",
+            "stories": [
+                {
+                    "story": "Create customer",
+                    "tasks": [
+                        {
+                            "task": "Implement POST /customers endpoint",
+                            "description": "Add the endpoint.",
+                            "effort": "M",
+                            "requirement_ids": ["FR-001"],
+                            "architecture_ids": ["api"],
+                        }
+                    ],
+                }
+            ],
+        }
+    ],
+    "ambiguities": [],
+}
+
+_TECHNICAL_DESIGN_DOCUMENT = {
+    "document_title": "Customer Management Technical Design",
+    "system_name": "Customer Management System",
+    "version": "1.0",
+    "executive_summary": "A minimal system for managing customers.",
+    "sections": [
+        {
+            "title": "Architecture Overview",
+            "level": 1,
+            "body": "The system exposes a single API component.",
+            "include_diagram": True,
+        },
+        {
+            "title": "Components",
+            "level": 2,
+            "body": "The API component handles all requests.",
+            "bullets": ["API: handles requests."],
+        },
+    ],
+}
+
+
+def test_export_technical_design_returns_docx() -> None:
+    response = client.post(
+        "/tools/technical-design/export",
+        json={
+            "document": _TECHNICAL_DESIGN_DOCUMENT,
+            "design": _VALID_DESIGN,
+            "requirements": _REQUIREMENTS,
+            "work_breakdown": _WORK_BREAKDOWN,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["byte_count"] > 0
+    assert body["heading_count"] >= 2
+    assert body["docx_base64"]
+
+
+def test_export_technical_design_rejects_document_with_no_sections() -> None:
+    empty_document = {**_TECHNICAL_DESIGN_DOCUMENT, "sections": []}
+
+    response = client.post(
+        "/tools/technical-design/export",
+        json={
+            "document": empty_document,
+            "design": _VALID_DESIGN,
+            "requirements": _REQUIREMENTS,
+            "work_breakdown": _WORK_BREAKDOWN,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "sections" in response.json()["detail"].lower()

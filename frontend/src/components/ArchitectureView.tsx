@@ -72,6 +72,9 @@ export function ArchitectureView({
               <code>{c.id}</code> <strong>{c.name}</strong>
               {c.domain && <span className="domain-badge">{c.domain}</span>} -{" "}
               {c.responsibility}
+              {c.trust_zone && c.trust_zone !== "TBD" && (
+                <span className="muted"> (Zone: {c.trust_zone})</span>
+              )}
             </>
           )}
         />
@@ -85,9 +88,26 @@ export function ArchitectureView({
               <code>{c.id}</code> <strong>{c.name}</strong>
               {c.domain && <span className="domain-badge">{c.domain}</span>} -{" "}
               {c.responsibility}
+              {c.trust_zone && c.trust_zone !== "TBD" && (
+                <span className="muted"> (Zone: {c.trust_zone})</span>
+              )}
             </li>
           ))}
         </ul>
+      )}
+
+      <h3>Actors</h3>
+      {data.actors.length > 0 ? (
+        <ul>
+          {data.actors.map((actor) => (
+            <li key={actor.id}>
+              <code>{actor.id}</code> <strong>{actor.name}</strong>{" "}
+              <span className="domain-badge">{actor.kind}</span> - {actor.description}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">None.</p>
       )}
 
       <h3>Interfaces</h3>
@@ -99,7 +119,8 @@ export function ArchitectureView({
           renderItem={(iface) => (
             <>
               <code>{iface.id}</code> <strong>{iface.name}</strong>:{" "}
-              {iface.source_component} → {iface.target_component} - {iface.purpose}
+              {iface.source_component} → {iface.target_component} ({iface.flow_type}) -{" "}
+              {iface.purpose}
             </>
           )}
         />
@@ -108,7 +129,8 @@ export function ArchitectureView({
           {data.interfaces.map((iface) => (
             <li key={iface.id}>
               <code>{iface.id}</code> <strong>{iface.name}</strong>:{" "}
-              {iface.source_component} → {iface.target_component} - {iface.purpose}
+              {iface.source_component} → {iface.target_component} ({iface.flow_type}) -{" "}
+              {iface.purpose}
             </li>
           ))}
         </ul>
@@ -137,6 +159,52 @@ export function ArchitectureView({
           {data.external_dependencies.map((dep) => (
             <li key={dep.id}>
               <code>{dep.id}</code> <strong>{dep.name}</strong> - {dep.purpose}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">None.</p>
+      )}
+
+      <h3>Azure Service Mapping</h3>
+      {data.azure_mappings.length > 0 ? (
+        <table className="azure-mapping-table">
+          <thead>
+            <tr>
+              <th>Component</th>
+              <th>Azure Service</th>
+              <th>Category</th>
+              <th>Connectivity</th>
+              <th>Trust Zone</th>
+              <th>Rationale</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.azure_mappings.map((mapping) => (
+              <tr key={mapping.id}>
+                <td>
+                  <code>{mapping.component_id}</code>
+                </td>
+                <td>{mapping.azure_service}</td>
+                <td>{mapping.service_category}</td>
+                <td>{mapping.connectivity}</td>
+                <td>{mapping.trust_zone}</td>
+                <td>{mapping.rationale}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="muted">None.</p>
+      )}
+
+      <h3>Supporting Azure Services</h3>
+      {data.supporting_azure_services.length > 0 ? (
+        <ul>
+          {data.supporting_azure_services.map((service) => (
+            <li key={service.id}>
+              <strong>{service.azure_service}</strong>{" "}
+              <span className="domain-badge">{service.category}</span> - {service.purpose}
             </li>
           ))}
         </ul>

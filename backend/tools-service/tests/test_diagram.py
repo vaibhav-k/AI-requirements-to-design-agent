@@ -1,10 +1,16 @@
 from src.domain.design import (
+    Actor,
+    AzureServiceMapping,
     DesignComponent,
     DesignInterface,
+    DiagramMetadata,
     ExternalDependency,
+    SupportingAzureService,
     SystemDesignArtifact,
 )
 from src.infrastructure.diagram import ArchitectureDiagramGenerator
+
+_METADATA = DiagramMetadata(title="Test Diagram")
 
 
 def test_diagram_contains_components() -> None:
@@ -33,11 +39,34 @@ def test_diagram_contains_components() -> None:
         ],
     )
 
-    svg = ArchitectureDiagramGenerator().generate(design)
+    svg = ArchitectureDiagramGenerator().generate_logical(design, _METADATA)
 
     assert "<svg" in svg
     assert "API" in svg
     assert "Document Service" in svg
+
+
+def test_diagram_generate_png_returns_png_bytes() -> None:
+    """``generate_png`` - added for the technical-design ``.docx`` export
+    path (python-docx cannot embed the SVG ``generate`` produces) - shares
+    ``generate``'s ``_build_graph`` core, so this only needs to check the
+    output format actually changed."""
+
+    design = SystemDesignArtifact(
+        architecture_summary="Document platform.",
+        components=[
+            DesignComponent(
+                id="api",
+                name="API",
+                responsibility="Handles requests.",
+            ),
+        ],
+    )
+
+    png = ArchitectureDiagramGenerator().generate_logical_png(design, _METADATA)
+
+    assert isinstance(png, bytes)
+    assert png.startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_diagram_contains_external_dependency() -> None:
@@ -60,7 +89,7 @@ def test_diagram_contains_external_dependency() -> None:
         ],
     )
 
-    svg = ArchitectureDiagramGenerator().generate(design)
+    svg = ArchitectureDiagramGenerator().generate_logical(design, _METADATA)
 
     assert "<svg" in svg
     assert "Blob Storage" in svg
@@ -90,7 +119,7 @@ def test_diagram_groups_components_into_domain_clusters() -> None:
         ],
     )
 
-    svg = ArchitectureDiagramGenerator().generate(design)
+    svg = ArchitectureDiagramGenerator().generate_logical(design, _METADATA)
 
     assert "Edge" in svg
     assert "Backend" in svg
@@ -109,7 +138,7 @@ def test_diagram_blank_domain_falls_back_to_default_cluster() -> None:
         ],
     )
 
-    svg = ArchitectureDiagramGenerator().generate(design)
+    svg = ArchitectureDiagramGenerator().generate_logical(design, _METADATA)
 
     assert ArchitectureDiagramGenerator.DEFAULT_DOMAIN in svg
     assert "A" in svg
@@ -144,7 +173,7 @@ def test_diagram_suppresses_inline_labels_past_threshold() -> None:
         interfaces=interfaces,
     )
 
-    svg = ArchitectureDiagramGenerator().generate(design)
+    svg = ArchitectureDiagramGenerator().generate_logical(design, _METADATA)
 
     assert "UNIQUE_INTERFACE_LABEL_0" not in svg
     # The purpose text still reaches the SVG via each edge's tooltip, even
@@ -174,7 +203,7 @@ def test_diagram_keeps_inline_labels_below_threshold() -> None:
         ],
     )
 
-    svg = ArchitectureDiagramGenerator().generate(design)
+    svg = ArchitectureDiagramGenerator().generate_logical(design, _METADATA)
 
     assert "Fetch Data" in svg
 
@@ -201,7 +230,7 @@ def test_diagram_dependency_label_shown_once_per_dependency() -> None:
         ],
     )
 
-    svg = ArchitectureDiagramGenerator().generate(design)
+    svg = ArchitectureDiagramGenerator().generate_logical(design, _METADATA)
 
     # Once in the dependency's own node box, and once (not four times) as
     # an edge label - the other three incoming edges carry the same
@@ -256,7 +285,7 @@ def test_diagram_handles_large_multi_domain_design_without_crashing() -> None:
         ],
     )
 
-    svg = ArchitectureDiagramGenerator().generate(design)
+    svg = ArchitectureDiagramGenerator().generate_logical(design, _METADATA)
 
     assert "<svg" in svg
 
@@ -301,7 +330,7 @@ def test_diagram_labeled_interface_uses_a_label_node_not_an_xlabel() -> None:
         ],
     )
 
-    svg = ArchitectureDiagramGenerator().generate(design)
+    svg = ArchitectureDiagramGenerator().generate_logical(design, _METADATA)
 
     # The label text appears exactly once - as its own node's caption -
     # not duplicated across a node and a separate xlabel.
@@ -312,3 +341,145 @@ def test_diagram_labeled_interface_uses_a_label_node_not_an_xlabel() -> None:
     # than off to one side of it.
     assert "<title>api&#45;&gt;__label__i1</title>" in svg
     assert "<title>__label__i1&#45;&gt;service</title>" in svg
+
+
+def test_azure_mapping_diagram_shows_mapped_service_and_shares_component_id() -> None:
+    """The Azure Service Mapping Diagram renders the mapped Azure service
+    name AND keeps the same node id as the Logical Architecture Diagram -
+    the core traceability requirement: a reviewer must be able to find a
+    component's Azure implementation by its shared id."""
+
+    design = SystemDesignArtifact(
+        architecture_summary="Document platform.",
+        components=[
+            DesignComponent(
+                id="api",
+                name="API",
+                responsibility="Handles requests.",
+            ),
+        ],
+        azure_mappings=[
+            AzureServiceMapping(
+                id="map-api",
+                component_id="api",
+                azure_service="Azure App Service",
+                rationale="Managed PaaS hosting.",
+                connectivity="public-endpoint",
+                trust_zone="Public",
+            )
+        ],
+    )
+
+    logical_svg = ArchitectureDiagramGenerator().generate_logical(design, _METADATA)
+    azure_svg = ArchitectureDiagramGenerator().generate_azure_mapping(design, _METADATA)
+
+    assert "<title>api</title>" in logical_svg
+    assert "<title>api</title>" in azure_svg
+    assert "Azure App Service" in azure_svg
+    # The Logical diagram is technology-agnostic - it must never show the
+    # Azure service name.
+    assert "Azure App Service" not in logical_svg
+
+
+def test_azure_mapping_diagram_omits_components_with_no_mapping() -> None:
+    """A component with no `AzureServiceMapping` entry has nothing to
+    show on this diagram, so it's omitted rather than rendered as an
+    empty/placeholder Azure node."""
+
+    design = SystemDesignArtifact(
+        architecture_summary="Partially mapped platform.",
+        components=[
+            DesignComponent(id="api", name="API", responsibility="x"),
+            DesignComponent(id="unmapped", name="Unmapped", responsibility="y"),
+        ],
+        azure_mappings=[
+            AzureServiceMapping(
+                id="map-api", component_id="api", azure_service="Azure App Service"
+            )
+        ],
+    )
+
+    azure_svg = ArchitectureDiagramGenerator().generate_azure_mapping(design, _METADATA)
+
+    assert "<title>api</title>" in azure_svg
+    assert "<title>unmapped</title>" not in azure_svg
+
+
+def test_azure_mapping_diagram_renders_supporting_services() -> None:
+    design = SystemDesignArtifact(
+        architecture_summary="Platform with identity.",
+        components=[
+            DesignComponent(id="api", name="API", responsibility="x"),
+        ],
+        azure_mappings=[
+            AzureServiceMapping(
+                id="map-api", component_id="api", azure_service="Azure App Service"
+            )
+        ],
+        supporting_azure_services=[
+            SupportingAzureService(
+                id="identity",
+                azure_service="Microsoft Entra ID",
+                category="Identity",
+                purpose="Authenticates users.",
+                applies_to_components=["api"],
+            )
+        ],
+    )
+
+    azure_svg = ArchitectureDiagramGenerator().generate_azure_mapping(design, _METADATA)
+
+    assert "Microsoft Entra ID" in azure_svg
+    assert "<title>identity</title>" in azure_svg
+    assert "supports" in azure_svg
+    # The "supports" label splits the edge into two segments through an
+    # intermediate label node (see `_add_labeled_edge`) rather than a
+    # single direct edge, so this checks for the first segment.
+    assert "identity&#45;&gt;__support_label__identity__api" in azure_svg
+
+
+def test_logical_diagram_renders_actors_and_async_edge_style() -> None:
+    design = SystemDesignArtifact(
+        architecture_summary="Event-driven platform.",
+        components=[
+            DesignComponent(id="api", name="API", responsibility="x"),
+        ],
+        actors=[Actor(id="user", name="End User", kind="user", description="A user.")],
+        interfaces=[
+            DesignInterface(
+                id="i1",
+                name="Order Placed",
+                purpose="Notifies downstream systems.",
+                source_component="user",
+                target_component="api",
+                flow_type="async",
+            )
+        ],
+    )
+
+    svg = ArchitectureDiagramGenerator().generate_logical(design, _METADATA)
+
+    assert "<title>user</title>" in svg
+    assert "Order Placed" in svg
+    assert "event" in svg
+
+
+def test_diagram_metadata_block_is_rendered() -> None:
+    metadata = DiagramMetadata(
+        title="My Diagram",
+        description="A test description.",
+        scope="Test scope.",
+        author="TBD",
+        version=3,
+        last_updated="2026-01-01T00:00:00+00:00",
+    )
+    design = SystemDesignArtifact(
+        architecture_summary="x",
+        components=[DesignComponent(id="a", name="A", responsibility="x")],
+    )
+
+    svg = ArchitectureDiagramGenerator().generate_logical(design, metadata)
+
+    assert "My Diagram" in svg
+    assert "A test description." in svg
+    assert "Version: 3" in svg

@@ -26,6 +26,7 @@ class DesignSessionResult:
     design: SystemDesignArtifact
     design_blob: str
     diagram_blob: str
+    azure_diagram_blob: str
     version: int
     created_at: str
 
@@ -34,11 +35,13 @@ class DesignSessionResult:
         design: SystemDesignArtifact,
         design_blob: str,
         diagram_blob: str,
+        azure_diagram_blob: str,
         version: int,
     ) -> None:
         self.design = design
         self.design_blob = design_blob
         self.diagram_blob = diagram_blob
+        self.azure_diagram_blob = azure_diagram_blob
         self.version = version
         self.created_at = datetime.now(UTC).isoformat()
 
@@ -122,11 +125,14 @@ class ArchitectureSession:
         """
 
         next_version = self.version + 1
+        generated_at = datetime.now(UTC).isoformat()
 
         try:
             validated_design: SystemDesignArtifact = self.validator.validate(design)
 
-            svg = self.diagram_generator.generate(validated_design)
+            diagrams = self.diagram_generator.generate(
+                validated_design, next_version, generated_at
+            )
 
             design_json = validated_design.model_dump_json(indent=2)
 
@@ -139,7 +145,15 @@ class ArchitectureSession:
             diagram_blob = self.store.save_design_svg(
                 session_id=self.session_id,
                 version=next_version,
-                content=svg,
+                content=diagrams.logical_svg,
+                kind="logical",
+            )
+
+            azure_diagram_blob = self.store.save_design_svg(
+                session_id=self.session_id,
+                version=next_version,
+                content=diagrams.azure_mapping_svg,
+                kind="azure",
             )
 
         except ArchitectureValidationError as exc:
@@ -159,5 +173,6 @@ class ArchitectureSession:
             design=validated_design,
             design_blob=design_blob,
             diagram_blob=diagram_blob,
+            azure_diagram_blob=azure_diagram_blob,
             version=next_version,
         )

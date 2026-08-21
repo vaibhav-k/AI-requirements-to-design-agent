@@ -7,6 +7,12 @@ interface DiagramViewerProps {
    * architecture list below highlight/scroll to match - see
    * ArchitectureView's `highlightedComponentId`. */
   onInspect?: (componentId: string | null) => void
+  /** Renders a "Download PNG" button at the right edge of the toolbar
+   * (grouped with Zoom in/out/Reset, since it's another way of "getting
+   * this diagram out of the viewer" rather than a diagram-selection
+   * control) when provided. Omitted entirely - not just disabled - when
+   * there's nothing to download yet. */
+  onDownloadPng?: () => void
 }
 
 const MIN_SCALE = 0.25
@@ -25,7 +31,7 @@ function sanitizeSvg(markup: string): string {
     .replace(/\son\w+='[^']*'/gi, "")
 }
 
-export function DiagramViewer({ svg, onInspect }: DiagramViewerProps) {
+export function DiagramViewer({ svg, onInspect, onDownloadPng }: DiagramViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(1)
   const [translate, setTranslate] = useState({ x: 0, y: 0 })
@@ -92,6 +98,11 @@ export function DiagramViewer({ svg, onInspect }: DiagramViewerProps) {
           Reset
         </button>
         <span className="muted">{Math.round(scale * 100)}%</span>
+        {onDownloadPng && (
+          <button type="button" className="diagram-download-button" onClick={onDownloadPng}>
+            Download PNG
+          </button>
+        )}
       </div>
       <div
         ref={containerRef}

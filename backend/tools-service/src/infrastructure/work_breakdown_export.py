@@ -91,10 +91,7 @@ class WorkBreakdownExporter:
         valid_architecture_ids = {
             *(component.id for component in request.design.components),
             *(interface.id for interface in request.design.interfaces),
-            *(
-                dependency.id
-                for dependency in request.design.external_dependencies
-            ),
+            *(dependency.id for dependency in request.design.external_dependencies),
         }
 
         referenced_requirement_ids = {

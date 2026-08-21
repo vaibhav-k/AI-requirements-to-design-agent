@@ -24,7 +24,7 @@ from app.application.errors import (
 )
 from app.config import Settings
 from app.design.session import DesignGenerationWorkflowError
-from app.domain.design import SystemDesignArtifact
+from app.domain.design import ArchitectureDiagrams, SystemDesignArtifact
 from app.domain.requirements import RequirementsArtifact
 from app.domain.session import SessionRecord
 from app.domain.vision import ImageClassification
@@ -255,7 +255,9 @@ def test_accept_run_generates_and_persists_the_architecture(
     fakes["store"].get.return_value = record
     fakes["design_analyzer"].execute.return_value = make_design()
     fakes["validator"].validate.side_effect = lambda design: design
-    fakes["diagram_generator"].generate.return_value = "<svg></svg>"
+    fakes["diagram_generator"].generate.return_value = ArchitectureDiagrams(
+        logical_svg="<svg>logical</svg>", azure_mapping_svg="<svg>azure</svg>"
+    )
     fakes["artifact_store"].save_design_json.return_value = "dev/abc-123/design/v1.json"
     fakes["artifact_store"].save_design_svg.return_value = "dev/abc-123/design/v1.svg"
 
@@ -426,7 +428,9 @@ def test_refine_architecture_bumps_the_version_and_persists(
         architecture_summary="A refined design."
     )
     fakes["validator"].validate.side_effect = lambda design: design
-    fakes["diagram_generator"].generate.return_value = "<svg></svg>"
+    fakes["diagram_generator"].generate.return_value = ArchitectureDiagrams(
+        logical_svg="<svg>logical</svg>", azure_mapping_svg="<svg>azure</svg>"
+    )
     fakes["artifact_store"].save_design_json.return_value = "dev/abc-123/design/v2.json"
     fakes["artifact_store"].save_design_svg.return_value = "dev/abc-123/design/v2.svg"
 
@@ -593,7 +597,9 @@ def test_reject_run_does_not_block_a_later_refine_architecture_call(
         architecture_summary="A refined design."
     )
     fakes["validator"].validate.side_effect = lambda design: design
-    fakes["diagram_generator"].generate.return_value = "<svg></svg>"
+    fakes["diagram_generator"].generate.return_value = ArchitectureDiagrams(
+        logical_svg="<svg>logical</svg>", azure_mapping_svg="<svg>azure</svg>"
+    )
     fakes["artifact_store"].save_design_json.return_value = "dev/abc-123/design/v2.json"
     fakes["artifact_store"].save_design_svg.return_value = "dev/abc-123/design/v2.svg"
 
@@ -638,7 +644,9 @@ def test_accept_run_starts_with_approval_status_pending(
     fakes["store"].get.return_value = record
     fakes["design_analyzer"].execute.return_value = make_design()
     fakes["validator"].validate.side_effect = lambda design: design
-    fakes["diagram_generator"].generate.return_value = "<svg></svg>"
+    fakes["diagram_generator"].generate.return_value = ArchitectureDiagrams(
+        logical_svg="<svg>logical</svg>", azure_mapping_svg="<svg>azure</svg>"
+    )
     fakes["artifact_store"].save_design_json.return_value = "dev/abc-123/design/v1.json"
     fakes["artifact_store"].save_design_svg.return_value = "dev/abc-123/design/v1.svg"
 
@@ -687,9 +695,9 @@ def test_start_run_from_upload_extracts_text_and_creates_a_session(
     fakes["document_extractor"].extract.return_value = "Extracted requirements text."
     fakes["requirements_analyzer"].execute.return_value = make_requirements()
     fakes["artifact_store"].save.return_value = "dev/x/requirements/v1.json"
-    fakes["artifact_store"].save_source_file.return_value = (
-        "dev/x/requirements/v1_source.pdf"
-    )
+    fakes[
+        "artifact_store"
+    ].save_source_file.return_value = "dev/x/requirements/v1_source.pdf"
 
     response = client.post(
         "/requirements-runs/upload",
@@ -1023,9 +1031,9 @@ def test_edit_requirements_with_only_business_goal_leaves_requirements_untouched
     assert response.status_code == 200
     body = response.json()
     assert body["requirements"]["business_goal"] == "Ship faster."
-    assert [
-        fr["id"] for fr in body["requirements"]["functional_requirements"]
-    ] == ["FR-001"]
+    assert [fr["id"] for fr in body["requirements"]["functional_requirements"]] == [
+        "FR-001"
+    ]
 
 
 def test_edit_requirements_returns_404_for_an_unknown_session(
@@ -1059,9 +1067,9 @@ def test_start_run_from_upload_with_document_image_uses_ocr_pipeline(
     fakes["document_extractor"].extract.return_value = "Extracted requirements text."
     fakes["requirements_analyzer"].execute.return_value = make_requirements()
     fakes["artifact_store"].save.return_value = "dev/x/requirements/v1.json"
-    fakes["artifact_store"].save_source_file.return_value = (
-        "dev/x/requirements/v1_source.png"
-    )
+    fakes[
+        "artifact_store"
+    ].save_source_file.return_value = "dev/x/requirements/v1_source.png"
 
     response = client.post(
         "/requirements-runs/upload",
@@ -1090,12 +1098,14 @@ def test_start_run_from_upload_with_diagram_image_jumps_to_architecture(
         architecture_summary="Redrawn from the uploaded diagram."
     )
     fakes["validator"].validate.side_effect = lambda design: design
-    fakes["diagram_generator"].generate.return_value = "<svg></svg>"
+    fakes["diagram_generator"].generate.return_value = ArchitectureDiagrams(
+        logical_svg="<svg>logical</svg>", azure_mapping_svg="<svg>azure</svg>"
+    )
     fakes["artifact_store"].save_design_json.return_value = "dev/x/design/v1.json"
     fakes["artifact_store"].save_design_svg.return_value = "dev/x/design/v1.svg"
-    fakes["artifact_store"].save_source_file.return_value = (
-        "dev/x/requirements/v1_source.png"
-    )
+    fakes[
+        "artifact_store"
+    ].save_source_file.return_value = "dev/x/requirements/v1_source.png"
     fakes["artifact_store"].save.return_value = "dev/x/requirements/v1.json"
 
     response = client.post(
@@ -1167,12 +1177,14 @@ def test_refine_run_from_upload_with_diagram_image_jumps_to_architecture(
         architecture_summary="Redrawn from the uploaded diagram."
     )
     fakes["validator"].validate.side_effect = lambda design: design
-    fakes["diagram_generator"].generate.return_value = "<svg></svg>"
+    fakes["diagram_generator"].generate.return_value = ArchitectureDiagrams(
+        logical_svg="<svg>logical</svg>", azure_mapping_svg="<svg>azure</svg>"
+    )
     fakes["artifact_store"].save_design_json.return_value = "dev/abc-123/design/v1.json"
     fakes["artifact_store"].save_design_svg.return_value = "dev/abc-123/design/v1.svg"
-    fakes["artifact_store"].save_source_file.return_value = (
-        "dev/abc-123/requirements/v1_source.png"
-    )
+    fakes[
+        "artifact_store"
+    ].save_source_file.return_value = "dev/abc-123/requirements/v1_source.png"
 
     response = client.post(
         "/requirements-runs/abc-123/refine/upload",

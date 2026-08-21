@@ -9,6 +9,7 @@ import type {
   RequirementsArtifact,
   RequirementsRunView,
   SystemDesignArtifact,
+  TechnicalDesignArtifact,
   WorkBreakdownArtifact,
 } from "./types"
 
@@ -353,6 +354,16 @@ export function useRequirementsApi() {
       getArchitectureDiagram: (sessionId: string, version: number) =>
         requestText(`/requirements-runs/${sessionId}/architecture/${version}/diagram`),
 
+      /** The Azure Service Mapping Diagram SVG - the second of the two
+       * required architecture-generation-phase diagrams, alongside
+       * `getArchitectureDiagram` (the Logical Architecture Diagram).
+       * 404s for any design version rendered before this diagram
+       * existed. */
+      getAzureMappingDiagram: (sessionId: string, version: number) =>
+        requestText(
+          `/requirements-runs/${sessionId}/architecture/${version}/diagram/azure-mapping`,
+        ),
+
       // --- Work breakdown (app/api/routes/work_breakdown.py) - the fourth
       // pipeline stage, generated/refined only once the architecture has
       // been approved (see `_require_architecture_approved` there).
@@ -386,6 +397,45 @@ export function useRequirementsApi() {
         downloadFile(
           `/requirements-runs/${sessionId}/work-breakdown/export`,
           `work-breakdown-${sessionId}.csv`,
+        ),
+
+      // --- Technical design (app/api/routes/technical_design.py) - the
+      // fifth and final pipeline stage, generated/refined only once a
+      // work breakdown exists (see `_require_stage(..., STAGE_WORK_BREAKDOWN, ...)`
+      // there).
+
+      generateTechnicalDesign: (sessionId: string) =>
+        request<RequirementsRunView>(
+          `/requirements-runs/${sessionId}/technical-design`,
+          { method: "POST" },
+        ),
+
+      refineTechnicalDesign: (sessionId: string, input: string) =>
+        request<RequirementsRunView>(
+          `/requirements-runs/${sessionId}/technical-design/refine`,
+          {
+            method: "POST",
+            body: JSON.stringify({ input }),
+          },
+        ),
+
+      getTechnicalDesign: (sessionId: string) =>
+        request<TechnicalDesignArtifact>(
+          `/requirements-runs/${sessionId}/technical-design`,
+        ),
+
+      listTechnicalDesignVersions: (sessionId: string) =>
+        request<number[]>(`/requirements-runs/${sessionId}/technical-design/versions`),
+
+      getTechnicalDesignVersion: (sessionId: string, version: number) =>
+        request<TechnicalDesignArtifact>(
+          `/requirements-runs/${sessionId}/technical-design/${version}`,
+        ),
+
+      exportTechnicalDesignDocx: (sessionId: string) =>
+        downloadFile(
+          `/requirements-runs/${sessionId}/technical-design/export`,
+          `technical-design-${sessionId}.docx`,
         ),
     }),
     [request, requestText, downloadFile],

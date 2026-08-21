@@ -16,6 +16,7 @@ from __future__ import annotations
 from mcp.server.fastmcp import FastMCP
 
 from src.design_tools_wrapper.application.tool_calls import (
+    export_technical_design,
     export_work_breakdown,
     generate_architecture_diagram,
     validate_system_design,
@@ -34,19 +35,30 @@ mcp = FastMCP(
 
 
 @mcp.tool()
-async def generate_architecture_diagram_tool(design_json: str) -> str:
-    """Render a SystemDesignArtifact (JSON) as an SVG architecture diagram.
+async def generate_architecture_diagram_tool(
+    design_json: str,
+    version: int = 1,
+    generated_at: str = "TBD",
+) -> str:
+    """Render a SystemDesignArtifact (JSON) as the two required
+    architecture-generation-phase diagrams: the Logical Architecture
+    Diagram and the Azure Service Mapping Diagram.
 
     Args:
         design_json: JSON-serialized SystemDesignArtifact.
+        version: the design version being rendered - stamped into each
+            diagram's metadata block, never invented.
+        generated_at: ISO timestamp of when this render was requested -
+            stamped into each diagram's metadata block as "Last updated".
 
     Returns:
         JSON envelope: ``{"ok": bool, "status_code": int, "body": {...}}``.
-        ``body`` is ``{"svg": "<svg>...</svg>"}`` when ``ok`` is true, or
+        ``body`` is ``{"logical_svg": "<svg>...</svg>",
+        "azure_mapping_svg": "<svg>...</svg>"}`` when ``ok`` is true, or
         ``{"detail": "..."}`` when rendering failed.
     """
 
-    return await generate_architecture_diagram(design_json)
+    return await generate_architecture_diagram(design_json, version, generated_at)
 
 
 @mcp.tool()
@@ -89,3 +101,34 @@ async def export_work_breakdown_tool(
     """
 
     return await export_work_breakdown(breakdown_json, requirements_json, design_json)
+
+
+@mcp.tool()
+async def export_technical_design_tool(
+    document_json: str,
+    design_json: str,
+    requirements_json: str,
+    work_breakdown_json: str,
+) -> str:
+    """Render a TechnicalDesignArtifact (JSON) to a downloadable ``.docx``
+    file, with the approved architecture diagram embedded.
+
+    Args:
+        document_json: JSON-serialized TechnicalDesignArtifact.
+        design_json: JSON-serialized SystemDesignArtifact whose
+            architecture diagram is embedded in the rendered document.
+        requirements_json: JSON-serialized RequirementsArtifact referenced
+            by the document's traceability appendix.
+        work_breakdown_json: JSON-serialized WorkBreakdownArtifact
+            referenced by the document's traceability appendix.
+
+    Returns:
+        JSON envelope: ``{"ok": bool, "status_code": int, "body": {...}}``.
+        ``body`` is the ``TechnicalDesignExport`` (base64 ``.docx`` bytes
+        plus rendering summary) when ``ok`` is true, or
+        ``{"detail": "..."}`` when export failed.
+    """
+
+    return await export_technical_design(
+        document_json, design_json, requirements_json, work_breakdown_json
+    )

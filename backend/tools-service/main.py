@@ -22,6 +22,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from src.api.routes.diagrams import router as diagrams_router
+from src.api.routes.documents import router as documents_router
 from src.api.routes.validation import router as validation_router
 from src.api.routes.work_breakdown import router as work_breakdown_router
 from src.infrastructure.config import get_settings
@@ -37,6 +38,7 @@ def create_app() -> FastAPI:
     app.include_router(diagrams_router)
     app.include_router(validation_router)
     app.include_router(work_breakdown_router)
+    app.include_router(documents_router)
 
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str]:

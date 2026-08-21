@@ -29,6 +29,9 @@ from app.application.use_cases.classify_image import ClassifyImageUseCase
 from app.application.use_cases.generate_system_design import (
     GenerateSystemDesignUseCase,
 )
+from app.application.use_cases.generate_technical_design import (
+    GenerateTechnicalDesignUseCase,
+)
 from app.application.use_cases.generate_work_breakdown import (
     GenerateWorkBreakdownUseCase,
 )
@@ -46,6 +49,9 @@ from app.infrastructure.agents.requirements_agent import (
 )
 from app.infrastructure.agents.system_design_agent import (
     AgentFrameworkSystemDesignAgent,
+)
+from app.infrastructure.agents.technical_writer_agent import (
+    AgentFrameworkTechnicalWriterAgent,
 )
 from app.infrastructure.agents.work_breakdown_agent import (
     AgentFrameworkWorkBreakdownAgent,
@@ -150,6 +156,23 @@ def build_work_breakdown_use_case(
     )
 
     return GenerateWorkBreakdownUseCase(agent=agent)
+
+
+def build_technical_design_use_case(
+    model: str | None = None,
+) -> GenerateTechnicalDesignUseCase:
+    """Build a ``GenerateTechnicalDesignUseCase`` wired to a real
+    Microsoft Agent Framework agent, reading Azure OpenAI configuration
+    from the environment - the technical-design analogue of
+    ``build_work_breakdown_use_case``."""
+
+    agent = AgentFrameworkTechnicalWriterAgent(
+        api_key=_required_env("AZURE_OPENAI_API_KEY"),
+        endpoint=_required_env("AZURE_OPENAI_ENDPOINT"),
+        model=_resolved_model(model),
+    )
+
+    return GenerateTechnicalDesignUseCase(agent=agent)
 
 
 def build_design_tools_client() -> McpToolsClient:

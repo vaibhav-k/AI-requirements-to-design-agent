@@ -144,8 +144,7 @@ def generate_work_breakdown(
     if record.work_breakdown_version != 0:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            "A work breakdown already exists for this session; use "
-            "refine instead.",
+            "A work breakdown already exists for this session; use refine instead.",
         )
 
     # Same double-submit guard as accept_run/refine_architecture: mark

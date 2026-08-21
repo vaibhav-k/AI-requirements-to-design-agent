@@ -78,6 +78,11 @@ export interface DesignComponent {
    * designs. Drives per-domain clustering in the rendered diagram; see
    * app/design/diagram.py. */
   domain: string
+  /** Technology-agnostic trust/security boundary (e.g. "Public", "DMZ",
+   * "Private", "Internal") - "TBD" when unknown. Never an Azure-specific
+   * networking concept; see `AzureServiceMapping.connectivity`/
+   * `.trust_zone` for that. */
+  trust_zone: string
   requirement_ids: string[]
 }
 
@@ -85,8 +90,12 @@ export interface DesignInterface {
   id: string
   name: string
   purpose: string
+  /** May be a `DesignComponent.id` or an `Actor.id`. */
   source_component: string
+  /** May be a `DesignComponent.id` or an `Actor.id`. */
   target_component: string
+  /** "sync" (request/response) or "async" (event/message). */
+  flow_type: string
   requirement_ids: string[]
 }
 
@@ -95,6 +104,46 @@ export interface ExternalDependency {
   name: string
   purpose: string
   used_by_components: string[]
+}
+
+/** An external human or system actor interacting with the architecture
+ * from OUTSIDE its boundary - the mirror image of `ExternalDependency`
+ * (which this architecture calls OUT to). */
+export interface Actor {
+  id: string
+  name: string
+  /** "user" | "external_system" */
+  kind: string
+  description: string
+}
+
+/** Maps one logical component/actor/external dependency (by id) to its
+ * concrete Azure implementation - the traceability link between the
+ * Logical Architecture Diagram and the Azure Service Mapping Diagram. */
+export interface AzureServiceMapping {
+  id: string
+  component_id: string
+  azure_service: string
+  service_category: string
+  rationale: string
+  alternatives_considered: string[]
+  /** "public-endpoint" | "private-endpoint" | "vnet-internal" |
+   * "internal-only" | "TBD" */
+  connectivity: string
+  /** "Public" | "DMZ" | "Private VNet" | "Internal" | "TBD" */
+  trust_zone: string
+}
+
+/** An Azure service supporting the architecture without mapping 1:1 to
+ * any single component - identity, networking, secrets, monitoring,
+ * CI/CD. */
+export interface SupportingAzureService {
+  id: string
+  azure_service: string
+  category: string
+  purpose: string
+  rationale: string
+  applies_to_components: string[]
 }
 
 export interface DesignAssumption {
@@ -114,6 +163,9 @@ export interface SystemDesignArtifact {
   components: DesignComponent[]
   interfaces: DesignInterface[]
   external_dependencies: ExternalDependency[]
+  actors: Actor[]
+  azure_mappings: AzureServiceMapping[]
+  supporting_azure_services: SupportingAzureService[]
   assumptions: DesignAssumption[]
   open_questions: DesignQuestion[]
 }
@@ -145,6 +197,47 @@ export interface WorkBreakdownAmbiguity {
 export interface WorkBreakdownArtifact {
   features: WorkBreakdownFeature[]
   ambiguities: WorkBreakdownAmbiguity[]
+}
+
+export interface DesignTable {
+  caption: string
+  headers: string[]
+  rows: string[][]
+}
+
+// One entry in a flat, ordered list of document sections - `level`
+// (1-3) carries the section's own heading depth rather than nesting,
+// matching the backend's `app.domain.technical_design.DesignSection`.
+export interface DesignSection {
+  title: string
+  level: number
+  body: string
+  bullets: string[]
+  numbered_steps: string[]
+  table: DesignTable | null
+  include_diagram: boolean
+}
+
+export interface TechnicalDesignArtifact {
+  document_title: string
+  system_name: string
+  version: string
+  executive_summary: string
+  sections: DesignSection[]
+}
+
+// The rendered `.docx` export's metadata - `downloadTechnicalDesignExport`
+// in api.ts fetches the actual file bytes as a Blob separately; this
+// shape isn't currently surfaced in the UI but mirrors the backend's
+// `TechnicalDesignExport` for completeness/future use.
+export interface TechnicalDesignExport {
+  docx_base64: string
+  filename: string
+  heading_count: number
+  table_count: number
+  diagram_embedded: boolean
+  byte_count: number
+  warnings: string[]
 }
 
 // "requirements" | "generating" | "architecture" - matches
@@ -197,11 +290,20 @@ export interface RequirementsRunView {
   design_version: number
   design: SystemDesignArtifact | null
   design_blob: string | null
+  /** Blob name of the persisted Logical Architecture Diagram SVG. */
   diagram_blob: string | null
+  /** Blob name of the persisted Azure Service Mapping Diagram SVG -
+   * `null` for any design version rendered before this second diagram
+   * existed. */
+  azure_diagram_blob: string | null
   approval_status: ApprovalStatus
   approval_history: ApprovalDecision[]
   work_breakdown_version: number
   work_breakdown: WorkBreakdownArtifact | null
   work_breakdown_blob: string | null
+  technical_design_version: number
+  technical_design: TechnicalDesignArtifact | null
+  technical_design_blob: string | null
+  technical_design_export_blob: string | null
   error: string | null
 }

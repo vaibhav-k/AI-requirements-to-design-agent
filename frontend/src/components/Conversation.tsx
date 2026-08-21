@@ -98,6 +98,19 @@ interface ConversationProps {
    * `Architect` role `POST .../work-breakdown` requires. */
   readonly generateBreakdownAllowed: boolean
   readonly generateBreakdownDisabledReason?: string
+  readonly onGenerateTechnicalDesign: () => void
+  /** Whether "Generate technical design" should be offered at all - only
+   * true once a work breakdown exists and no technical design document
+   * exists yet for this session, the same "only offer once it's possible"
+   * shape as `canGenerateBreakdown` one stage later (see
+   * `app/api/routes/technical_design.py`'s `generate_technical_design`,
+   * which 409s otherwise). */
+  readonly canGenerateTechnicalDesign: boolean
+  readonly generateTechnicalDesignLabel: string
+  /** Same "grey out, don't hide" role gate as `generateBreakdownAllowed`,
+   * for the `Architect` role `POST .../technical-design` requires. */
+  readonly generateTechnicalDesignAllowed: boolean
+  readonly generateTechnicalDesignDisabledReason?: string
   /** "pending" | "approved" | "rejected" - the session's current decision,
    * shown as a badge next to the buttons. Only meaningful when
    * `canApprove` is true. */
@@ -143,6 +156,11 @@ export function Conversation({
   generateBreakdownLabel,
   generateBreakdownAllowed,
   generateBreakdownDisabledReason,
+  onGenerateTechnicalDesign,
+  canGenerateTechnicalDesign,
+  generateTechnicalDesignLabel,
+  generateTechnicalDesignAllowed,
+  generateTechnicalDesignDisabledReason,
   approvalStatus,
   canSend,
   placeholder,
@@ -287,6 +305,20 @@ export function Conversation({
               title={!generateBreakdownAllowed ? generateBreakdownDisabledReason : undefined}
             >
               {generateBreakdownLabel}
+            </button>
+          )}
+          {canGenerateTechnicalDesign && (
+            <button
+              type="button"
+              onClick={onGenerateTechnicalDesign}
+              disabled={!canSend || !generateTechnicalDesignAllowed}
+              title={
+                !generateTechnicalDesignAllowed
+                  ? generateTechnicalDesignDisabledReason
+                  : undefined
+              }
+            >
+              {generateTechnicalDesignLabel}
             </button>
           )}
         </div>

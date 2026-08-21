@@ -2,7 +2,11 @@
 
 An AI-powered requirements engineering agent that transforms natural-
 language software requirements into structured requirements and a
-high-level system architecture, complete with a rendered SVG diagram.
+high-level system architecture, complete with two complementary
+rendered SVG diagrams: a technology-agnostic Logical Architecture
+Diagram and an Azure Service Mapping Diagram that maps every major
+logical component to its concrete Azure implementation (see
+`backend/tools-service/src/infrastructure/diagram.py`).
 
 This repository is three independently deployable services rather than
 one monolith - see `backend/orchestrator/README.md`'s "Service
@@ -14,30 +18,35 @@ setup/run/test instructions.
 
 * **`backend/orchestrator/`** - owns all state and every LLM call.
   FastAPI web API, an interactive CLI, Azure Blob/Cosmos persistence,
-  Microsoft Agent Framework-backed requirements/design/work-breakdown
-  generation, and an external MCP server exposing the whole pipeline
-  (requirements → architecture → work breakdown) to outside clients (an
-  IDE assistant, another agent). This is the service end users and
-  external MCP clients actually talk to.
+  Microsoft Agent Framework-backed requirements/design/work-breakdown/
+  technical-design-document generation, and an external MCP server
+  exposing the whole pipeline (requirements → architecture → work
+  breakdown → technical design document) to outside clients (an IDE
+  assistant, another agent). This is the service end users and external
+  MCP clients actually talk to.
 * **`backend/tools-service/`** - the deterministic, LLM-free logic that
   used to run in-process on the orchestrator (Graphviz-based diagram
   rendering, design validation), plus the work-breakdown CSV
-  export/traceability validator, which never had an in-process home to
-  begin with - it was built directly here since it's equally LLM-free.
-  Plain FastAPI REST, no MCP awareness, no LLM dependency.
+  export/traceability validator and the technical-design-document
+  `.docx` renderer, neither of which ever had an in-process home to
+  begin with - both were built directly here since they're equally
+  LLM-free. Plain FastAPI REST, no MCP awareness, no LLM dependency.
 * **`backend/mcp-wrapper/`** - a thin internal MCP gateway between the
-  orchestrator and tools-service. Translates three MCP tool calls
+  orchestrator and tools-service. Translates four MCP tool calls
   (`generate_architecture_diagram_tool`, `validate_system_design_tool`,
-  `export_work_breakdown_tool`) into plain REST calls against
-  tools-service. Nothing outside this repository talks to it.
+  `export_work_breakdown_tool`, `export_technical_design_tool`) into
+  plain REST calls against tools-service. Nothing outside this
+  repository talks to it.
 * **`frontend/`** - the React + Vite + TypeScript web UI, a fourth
   top-level directory alongside the three `backend/` services above
   (not itself an independently deployable service - it's a browser app
   that talks only to `backend/orchestrator`'s web API). Covers
-  requirements → architecture → Task Planning (Work Breakdown Agent)
-  end to end: create/refine/accept requirements, refine/approve
-  architecture, then generate/refine/export a CSV work breakdown once
-  architecture is approved. See `backend/orchestrator/README.md`'s
+  requirements → architecture → Task Planning (Work Breakdown Agent) →
+  Technical Design (Technical Writer Agent) end to end: create/refine/
+  accept requirements, refine/approve architecture, generate/refine/
+  export a CSV work breakdown once architecture is approved, then
+  generate/refine/export a `.docx` technical design document once the
+  work breakdown exists. See `backend/orchestrator/README.md`'s
   "Frontend" section for the full component breakdown, and
   `frontend/README.md` for how to run it.
 
@@ -70,9 +79,9 @@ setup/run/test instructions.
 All three services are needed for the full requirements-to-diagram flow
 to work end to end (the orchestrator alone can still run and serve
 `/health`, `/me`, and text-only requirements analysis - diagram
-generation, design validation, and work-breakdown CSV export are the
-three capabilities that need tools-service/mcp-wrapper up). Each runs as
-a plain local process - no
+generation, design validation, work-breakdown CSV export, and
+technical-design-document `.docx` export are the four capabilities that
+need tools-service/mcp-wrapper up). Each runs as a plain local process - no
 Docker involved - start them in this order, since each depends on the
 one before it being reachable:
 

@@ -83,9 +83,7 @@ def list_requirements_versions(
     session_id: str,
     request: Request,
     store: Annotated[SessionStorePort, Depends(get_session_store)],  # noqa: B008
-    artifact_store: Annotated[
-        ArtifactStorePort, Depends(get_artifact_store)
-    ],  # noqa: B008
+    artifact_store: Annotated[ArtifactStorePort, Depends(get_artifact_store)],  # noqa: B008
 ) -> list[int]:
     load_owned(store, session_id, request)
     return artifact_store.list_requirements_versions(session_id)
@@ -99,9 +97,7 @@ def get_requirements_version(
     version: int,
     request: Request,
     store: Annotated[SessionStorePort, Depends(get_session_store)],  # noqa: B008
-    artifact_store: Annotated[
-        ArtifactStorePort, Depends(get_artifact_store)
-    ],  # noqa: B008
+    artifact_store: Annotated[ArtifactStorePort, Depends(get_artifact_store)],  # noqa: B008
 ) -> RequirementsArtifact:
     load_owned(store, session_id, request)
 
@@ -122,9 +118,7 @@ def list_architecture_versions(
     session_id: str,
     request: Request,
     store: Annotated[SessionStorePort, Depends(get_session_store)],  # noqa: B008
-    artifact_store: Annotated[
-        ArtifactStorePort, Depends(get_artifact_store)
-    ],  # noqa: B008
+    artifact_store: Annotated[ArtifactStorePort, Depends(get_artifact_store)],  # noqa: B008
 ) -> list[int]:
     load_owned(store, session_id, request)
     return artifact_store.list_design_versions(session_id)
@@ -157,9 +151,7 @@ def compare_architecture_versions(
     from_version: Annotated[int, Query(alias="from")],
     to_version: Annotated[int, Query(alias="to")],
     store: Annotated[SessionStorePort, Depends(get_session_store)],  # noqa: B008
-    artifact_store: Annotated[
-        ArtifactStorePort, Depends(get_artifact_store)
-    ],  # noqa: B008
+    artifact_store: Annotated[ArtifactStorePort, Depends(get_artifact_store)],  # noqa: B008
 ) -> ArchitectureComparison:
     """A structured diff between two persisted architecture versions.
 
@@ -195,9 +187,7 @@ def get_architecture_version(
     version: int,
     request: Request,
     store: Annotated[SessionStorePort, Depends(get_session_store)],  # noqa: B008
-    artifact_store: Annotated[
-        ArtifactStorePort, Depends(get_artifact_store)
-    ],  # noqa: B008
+    artifact_store: Annotated[ArtifactStorePort, Depends(get_artifact_store)],  # noqa: B008
 ) -> SystemDesignArtifact:
     load_owned(store, session_id, request)
     return _load_architecture_version(artifact_store, session_id, version)
@@ -209,14 +199,43 @@ def get_architecture_diagram(
     version: int,
     request: Request,
     store: Annotated[SessionStorePort, Depends(get_session_store)],  # noqa: B008
-    artifact_store: Annotated[
-        ArtifactStorePort, Depends(get_artifact_store)
-    ],  # noqa: B008
+    artifact_store: Annotated[ArtifactStorePort, Depends(get_artifact_store)],  # noqa: B008
 ) -> Response:
+    """The Logical Architecture Diagram SVG for one design version.
+
+    Kept at this un-suffixed path (rather than e.g.
+    ``.../diagram/logical``) for backward compatibility - every design
+    version persisted before the two-diagram architecture-generation
+    phase existed only ever had this one diagram, stored under this
+    exact blob name (see ``ArtifactStore._svg_suffix``).
+    """
     load_owned(store, session_id, request)
 
-    svg = artifact_store.get_design_svg(session_id, version)
+    svg = artifact_store.get_design_svg(session_id, version, kind="logical")
     if svg is None:
         raise _not_found("diagram", version)
+
+    return Response(content=svg, media_type="image/svg+xml")
+
+
+@router.get("/{session_id}/architecture/{version}/diagram/azure-mapping")
+def get_architecture_azure_mapping_diagram(
+    session_id: str,
+    version: int,
+    request: Request,
+    store: Annotated[SessionStorePort, Depends(get_session_store)],  # noqa: B008
+    artifact_store: Annotated[ArtifactStorePort, Depends(get_artifact_store)],  # noqa: B008
+) -> Response:
+    """The Azure Service Mapping Diagram SVG for one design version.
+
+    ``None`` (404) for any design version persisted before the
+    two-diagram architecture-generation phase existed, since only the
+    Logical Architecture Diagram was ever rendered/stored back then.
+    """
+    load_owned(store, session_id, request)
+
+    svg = artifact_store.get_design_svg(session_id, version, kind="azure")
+    if svg is None:
+        raise _not_found("azure mapping diagram", version)
 
     return Response(content=svg, media_type="image/svg+xml")

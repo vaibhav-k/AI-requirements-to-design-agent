@@ -122,3 +122,22 @@ def dependency_icon_path(name: str, purpose: str) -> str:
 
     filename = _best_matching_icon(name, purpose, GENERIC_DEPENDENCY_ICON)
     return str(_ICONS_DIR / filename)
+
+
+def actor_icon_path(kind: str) -> str:
+    """Absolute path to the generic, technology-neutral icon for an
+    external `Actor` (see ``app/domain/design.py``), chosen by
+    ``kind`` ("user" vs "external_system") rather than keyword-matched
+    free text - an actor's name/description is about *who* they are,
+    not a hint toward any particular icon, so this deliberately doesn't
+    go through ``_best_matching_icon``.
+
+    Used by both the Logical Architecture Diagram (always) and the
+    Azure Service Mapping Diagram (an actor is external to the system
+    and typically has no Azure implementation of its own, but is still
+    rendered - with this same icon and id - so interfaces that
+    terminate at it remain traceable between the two diagrams).
+    """
+
+    filename = "client.png" if kind == "user" else GENERIC_DEPENDENCY_ICON
+    return str(_ICONS_DIR / filename)

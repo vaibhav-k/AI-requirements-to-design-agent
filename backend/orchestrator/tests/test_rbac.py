@@ -30,7 +30,7 @@ from app.api.dependencies import (
     get_validator,
 )
 from app.config import Settings
-from app.domain.design import SystemDesignArtifact
+from app.domain.design import ArchitectureDiagrams, SystemDesignArtifact
 from app.domain.requirements import RequirementsArtifact
 from app.domain.session import SessionRecord
 from app.web.main import create_app
@@ -114,9 +114,7 @@ def rbac_app(fakes: dict[str, MagicMock]) -> Iterator[TestClient]:
 
     settings_patcher = patch("app.security.auth.get_settings", return_value=settings)
     settings_patcher.start()
-    ownership_patcher = patch(
-        "app.api.ownership.get_settings", return_value=settings
-    )
+    ownership_patcher = patch("app.api.ownership.get_settings", return_value=settings)
     ownership_patcher.start()
 
     client = TestClient(app)
@@ -242,7 +240,9 @@ def test_accept_run_allowed_for_architect_role(
     fakes["store"].get.return_value = record
     fakes["design_analyzer"].execute.return_value = make_design()
     fakes["validator"].validate.side_effect = lambda design: design
-    fakes["diagram_generator"].generate.return_value = "<svg></svg>"
+    fakes["diagram_generator"].generate.return_value = ArchitectureDiagrams(
+        logical_svg="<svg>logical</svg>", azure_mapping_svg="<svg>azure</svg>"
+    )
     fakes["artifact_store"].save_design_json.return_value = "blob.json"
     fakes["artifact_store"].save_design_svg.return_value = "blob.svg"
 

@@ -27,6 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.artifacts import router as artifacts_router
 from app.api.routes.requirements import router as requirements_router
+from app.api.routes.technical_design import router as technical_design_router
 from app.api.routes.work_breakdown import router as work_breakdown_router
 from app.config import get_settings
 from app.infrastructure.artifact_store import (
@@ -149,6 +150,9 @@ def create_app() -> FastAPI:
     fastapi_app.include_router(artifacts_router, dependencies=[Depends(require_user)])
     fastapi_app.include_router(
         work_breakdown_router, dependencies=[Depends(require_user)]
+    )
+    fastapi_app.include_router(
+        technical_design_router, dependencies=[Depends(require_user)]
     )
 
     return fastapi_app

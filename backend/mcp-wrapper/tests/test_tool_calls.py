@@ -14,6 +14,7 @@ import httpx
 import pytest
 
 from src.design_tools_wrapper.application.tool_calls import (
+    export_technical_design,
     export_work_breakdown,
     generate_architecture_diagram,
     validate_system_design,
@@ -35,6 +36,12 @@ _REQUIREMENTS_JSON = json.dumps(
     }
 )
 _BREAKDOWN_JSON = json.dumps({"features": [], "ambiguities": []})
+_DOCUMENT_JSON = json.dumps(
+    {
+        "document_title": "Technical Design",
+        "sections": [{"title": "Overview", "level": 1, "body": "Overview text."}],
+    }
+)
 
 
 class _FakeResponse:
@@ -136,3 +143,49 @@ async def test_export_work_breakdown_envelope_on_failure(
     assert result["ok"] is False
     assert result["status_code"] == 422
     assert "traceability" in result["body"]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_export_technical_design_envelope_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_client = _FakeAsyncClient(
+        _FakeResponse(
+            200, {"docx_base64": "ZmFrZQ==", "filename": "technical-design.docx"}
+        )
+    )
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: fake_client)
+
+    result = json.loads(
+        await export_technical_design(
+            _DOCUMENT_JSON, _DESIGN_JSON, _REQUIREMENTS_JSON, _BREAKDOWN_JSON
+        )
+    )
+
+    assert result == {
+        "ok": True,
+        "status_code": 200,
+        "body": {"docx_base64": "ZmFrZQ==", "filename": "technical-design.docx"},
+    }
+    assert fake_client.posted_to is not None
+    assert fake_client.posted_to.endswith("/tools/technical-design/export")
+
+
+@pytest.mark.asyncio
+async def test_export_technical_design_envelope_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_client = _FakeAsyncClient(
+        _FakeResponse(422, {"detail": "The technical design document has no sections."})
+    )
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: fake_client)
+
+    result = json.loads(
+        await export_technical_design(
+            _DOCUMENT_JSON, _DESIGN_JSON, _REQUIREMENTS_JSON, _BREAKDOWN_JSON
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["status_code"] == 422
+    assert "sections" in result["body"]["detail"]

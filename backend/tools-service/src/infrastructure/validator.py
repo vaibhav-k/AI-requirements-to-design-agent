@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from src.domain.design import (
+    AzureServiceMapping,
     DesignInterface,
     ExternalDependency,
+    SupportingAzureService,
     SystemDesignArtifact,
 )
 from src.domain.errors import ArchitectureValidationError
@@ -27,6 +29,17 @@ class ArchitectureValidator:
         """Validate and return the architecture."""
 
         component_ids = {component.id for component in design.components}
+        actor_ids = {actor.id for actor in design.actors}
+        # Interface endpoints may reference either a component or an
+        # actor (see `Actor`'s docstring) - the diagram-generation layer
+        # tells them apart by which set an id falls into, but validation
+        # just needs the union.
+        endpoint_ids = component_ids | actor_ids
+        dependency_ids = {dependency.id for dependency in design.external_dependencies}
+        # `AzureServiceMapping.component_id` may point at a component, an
+        # actor, or an external dependency - whichever this design
+        # actually maps to Azure.
+        mappable_ids = endpoint_ids | dependency_ids
 
         errors: list[str] = [
             *self._duplicate_id_errors(
@@ -41,10 +54,26 @@ class ArchitectureValidator:
                 [dependency.id for dependency in design.external_dependencies],
                 "External dependency",
             ),
-            *self._validate_interfaces(design.interfaces, component_ids),
+            *self._duplicate_id_errors(
+                [actor.id for actor in design.actors],
+                "Actor",
+            ),
+            *self._duplicate_id_errors(
+                [mapping.id for mapping in design.azure_mappings],
+                "Azure service mapping",
+            ),
+            *self._duplicate_id_errors(
+                [service.id for service in design.supporting_azure_services],
+                "Supporting Azure service",
+            ),
+            *self._validate_interfaces(design.interfaces, endpoint_ids),
             *self._validate_external_dependencies(
                 design.external_dependencies,
                 component_ids,
+            ),
+            *self._validate_azure_mappings(design.azure_mappings, mappable_ids),
+            *self._validate_supporting_services(
+                design.supporting_azure_services, mappable_ids
             ),
             *self._validate_requirement_ids(self._collect_requirement_ids(design)),
         ]
@@ -153,6 +182,46 @@ class ArchitectureValidator:
             for component_id in dependency.used_by_components
             if component_id not in component_ids
         ]
+
+    # ---------------------------------------------------------
+    # Azure Service Mapping / supporting services traceability
+    # ---------------------------------------------------------
+    #
+    # These two checks are what actually enforces the architecture-
+    # generation phase's "must be directly traceable" requirement at the
+    # data layer: an `AzureServiceMapping`/`SupportingAzureService` that
+    # references an id absent from the Logical Architecture side would
+    # otherwise render a mapping-diagram node with no corresponding
+    # logical node to trace back to.
+
+    @staticmethod
+    def _validate_azure_mappings(
+        mappings: list[AzureServiceMapping],
+        mappable_ids: set[str],
+    ) -> list[str]:
+        return [
+            f"Azure service mapping '{mapping.id}' references unknown "
+            f"component/actor/external dependency '{mapping.component_id}'."
+            for mapping in mappings
+            if mapping.component_id not in mappable_ids
+        ]
+
+    @staticmethod
+    def _validate_supporting_services(
+        services: list[SupportingAzureService],
+        mappable_ids: set[str],
+    ) -> list[str]:
+        errors: list[str] = []
+
+        for service in services:
+            errors.extend(
+                f"Supporting Azure service '{service.id}' references "
+                f"unknown component/actor/external dependency '{component_id}'."
+                for component_id in service.applies_to_components
+                if component_id not in mappable_ids
+            )
+
+        return errors
 
     # ---------------------------------------------------------
     # Requirement traceability

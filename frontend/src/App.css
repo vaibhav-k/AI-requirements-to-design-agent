@@ -613,6 +613,37 @@ textarea {
   top: 0;
 }
 
+.diagram-kind-row {
+  margin-bottom: 8px;
+}
+
+/* Pushed to the toolbar's right edge (`.diagram-toolbar`'s own 8px
+ * padding gives it breathing room from the panel edge) so it reads as
+ * grouped with Zoom in/out/Reset rather than with the Logical/Azure
+ * diagram-selection tabs above the toolbar. */
+.diagram-download-button {
+  margin-left: auto;
+}
+
+.azure-mapping-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1rem;
+}
+
+.azure-mapping-table th,
+.azure-mapping-table td {
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+  font-size: 0.9em;
+}
+
+.azure-mapping-table th {
+  background: var(--accent-bg);
+}
+
 .diagram-viewer {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -663,6 +694,33 @@ textarea {
 
 .ambiguities-list {
   padding-left: 20px;
+}
+
+/* --- Technical design --- */
+
+.td-section {
+  margin-bottom: 20px;
+}
+
+.td-table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  width: 100%;
+}
+
+.td-table th,
+.td-table td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.td-table caption {
+  text-align: left;
+  font-size: 0.85em;
+  color: var(--text);
+  opacity: 0.75;
+  margin-top: 4px;
 }
 
 .diagram-hint {

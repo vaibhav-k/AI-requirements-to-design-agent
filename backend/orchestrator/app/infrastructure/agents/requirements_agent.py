@@ -79,7 +79,14 @@ class AgentFrameworkRequirementsAgent:
 
         response = await self._agent.run(
             prompt,
-            options=ChatOptions(response_format=RequirementsArtifact),
+            options=ChatOptions(response_format=RequirementsArtifact),  # pyright: ignore[reportArgumentType]  # agent_framework's
+            # ChatOptions TypedDict types response_format as
+            # type[BaseModel] | Mapping[str, Any] | None (see its source),
+            # but pyright resolves the constructor's parameter type as
+            # type[None] | Mapping[str, Any] | None here - a pyright/
+            # TypedDict-constructor stub-resolution gap, not a real type
+            # error; mypy (this project's configured checker) accepts the
+            # exact same call with zero issues.
         )
 
         if not isinstance(response.value, RequirementsArtifact):

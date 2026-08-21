@@ -147,8 +147,10 @@ def test_get_requirements_version_returns_the_unwrapped_artifact(
     client: TestClient, fakes: dict[str, MagicMock]
 ) -> None:
     own_session(fakes)
-    fakes["artifact_store"].get_requirements_json.return_value = (
-        make_stored_artifact_json(summary="v1 summary")
+    fakes[
+        "artifact_store"
+    ].get_requirements_json.return_value = make_stored_artifact_json(
+        summary="v1 summary"
     )
 
     response = client.get("/requirements-runs/abc-123/requirements/1")
@@ -202,9 +204,9 @@ def test_get_architecture_version_returns_the_design(
     client: TestClient, fakes: dict[str, MagicMock]
 ) -> None:
     own_session(fakes)
-    fakes["artifact_store"].get_design_json.return_value = (
-        '{"architecture_summary": "A design."}'
-    )
+    fakes[
+        "artifact_store"
+    ].get_design_json.return_value = '{"architecture_summary": "A design."}'
 
     response = client.get("/requirements-runs/abc-123/architecture/1")
 
@@ -296,7 +298,9 @@ def test_get_architecture_diagram_returns_svg(
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("image/svg+xml")
     assert response.text == "<svg>test</svg>"
-    fakes["artifact_store"].get_design_svg.assert_called_once_with("abc-123", 1)
+    fakes["artifact_store"].get_design_svg.assert_called_once_with(
+        "abc-123", 1, kind="logical"
+    )
 
 
 def test_get_architecture_diagram_404s_when_not_stored(

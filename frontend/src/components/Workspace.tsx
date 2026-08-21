@@ -6,6 +6,7 @@ import type {
   RequirementsArtifact,
   RequirementsRunView,
   SystemDesignArtifact,
+  TechnicalDesignArtifact,
   WorkBreakdownArtifact,
 } from "../types"
 import { useCurrentUser } from "../useCurrentUser"
@@ -56,6 +57,17 @@ function summarizeWorkBreakdown(breakdown: WorkBreakdownArtifact): string {
     `Work breakdown: ${featureCount} feature${featureCount === 1 ? "" : "s"}, ` +
     `${storyCount} stor${storyCount === 1 ? "y" : "ies"}, ` +
     `${taskCount} task${taskCount === 1 ? "" : "s"}.`
+  )
+}
+
+/** A one-line summary of a just-generated/refined technical design
+ * document for the transcript - same "counts only, never invents
+ * content" spirit as `summarizeWorkBreakdown`. */
+function summarizeTechnicalDesign(document: TechnicalDesignArtifact): string {
+  const sectionCount = document.sections.length
+  return (
+    `Technical design document "${document.document_title}": ` +
+    `${sectionCount} section${sectionCount === 1 ? "" : "s"}.`
   )
 }
 
@@ -110,7 +122,13 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
         // make sense as the default for a session that hasn't moved past
         // them yet.
         setActiveTab(
-          result.work_breakdown ? "work_breakdown" : result.design ? "architecture" : "requirements",
+          result.technical_design
+            ? "technical_design"
+            : result.work_breakdown
+              ? "work_breakdown"
+              : result.design
+                ? "architecture"
+                : "requirements",
         )
         if (result.requirements) {
           appendEntry({ role: "assistant", content: summarizeRequirements(result.requirements) })
@@ -120,6 +138,12 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
         }
         if (result.work_breakdown) {
           appendEntry({ role: "assistant", content: summarizeWorkBreakdown(result.work_breakdown) })
+        }
+        if (result.technical_design) {
+          appendEntry({
+            role: "assistant",
+            content: summarizeTechnicalDesign(result.technical_design),
+          })
         }
         if (result.error) {
           appendEntry({ role: "assistant", content: result.error, tone: "error" })
@@ -224,6 +248,40 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
             content: `Work breakdown refinement failed: ${friendlyErrorMessage(
               err,
               "Could not refine the work breakdown.",
+            )}`,
+            tone: "error",
+          })
+        })
+        .finally(() => setBusy(false))
+      return
+    }
+
+    if (run && run.stage === "technical_design") {
+      setBusy(true)
+      setStatus("processing")
+      api
+        .refineTechnicalDesign(sessionId, input)
+        .then((result) => {
+          setRun(result)
+          setStatus(result.error ? "error" : "ready")
+          setRefreshKey((key) => key + 1)
+          if (result.technical_design) {
+            appendEntry({
+              role: "assistant",
+              content: summarizeTechnicalDesign(result.technical_design),
+            })
+          }
+          if (result.error) {
+            appendEntry({ role: "assistant", content: result.error, tone: "error" })
+          }
+        })
+        .catch((err: unknown) => {
+          setStatus("error")
+          appendEntry({
+            role: "assistant",
+            content: `Technical design refinement failed: ${friendlyErrorMessage(
+              err,
+              "Could not refine the technical design document.",
             )}`,
             tone: "error",
           })
@@ -494,6 +552,45 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
       .finally(() => setBusy(false))
   }
 
+  const handleGenerateTechnicalDesign = () => {
+    if (!sessionId) return
+    setBusy(true)
+    setStatus("processing")
+    appendEntry({ role: "user", content: "Generate technical design" })
+    api
+      .generateTechnicalDesign(sessionId)
+      .then((result) => {
+        setRun(result)
+        setRefreshKey((key) => key + 1)
+        if (result.technical_design) {
+          setStatus("ready")
+          setActiveTab("technical_design")
+          appendEntry({
+            role: "assistant",
+            content: summarizeTechnicalDesign(result.technical_design),
+          })
+        } else if (result.error) {
+          setStatus("error")
+          appendEntry({ role: "assistant", content: result.error, tone: "error" })
+        } else {
+          setStatus("ready")
+        }
+      })
+      .catch((err: unknown) => {
+        setStatus("error")
+        const detail = friendlyErrorMessage(
+          err,
+          "Could not generate the technical design document.",
+        )
+        appendEntry({
+          role: "assistant",
+          content: `Technical design generation failed: ${detail}`,
+          tone: "error",
+        })
+      })
+      .finally(() => setBusy(false))
+  }
+
   const statusLabel: Record<ConversationStatus, string> = {
     idle: "Ready",
     loading: "Loading",
@@ -516,6 +613,10 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
       run.approval_status === "approved" &&
       run.work_breakdown_version === 0,
   )
+  const hasTechnicalDesign = Boolean(run?.technical_design)
+  const canGenerateTechnicalDesign = Boolean(
+    run && run.stage === "work_breakdown" && run.technical_design_version === 0,
+  )
 
   // Role gates - see permissions.ts and useCurrentUser.ts. Every check
   // defaults to "allowed" while `!loaded` (roles haven't been fetched
@@ -525,15 +626,21 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
   const canCreateRequirements = !rolesLoaded || hasAnyRole(roles, [ROLE_USER])
   const canManageArchitecture = !rolesLoaded || hasAnyRole(roles, [ROLE_ARCHITECT])
   const canDecideArchitecture = !rolesLoaded || hasAnyRole(roles, [ROLE_REVIEWER])
-  // "Send" does triple duty (refine requirements, refine an already-
-  // accepted architecture once `stage === "architecture"`, or refine a
-  // work breakdown once `stage === "work_breakdown"` - see `handleSend`'s
-  // own branching above) - which role it needs depends on which of those
-  // it would currently do. Refining a work breakdown needs the same
-  // `Architect` role as refining the architecture it traces back to (see
-  // app/api/routes/work_breakdown.py's `refine_work_breakdown`).
+  // "Send" does quadruple duty (refine requirements, refine an already-
+  // accepted architecture once `stage === "architecture"`, refine a work
+  // breakdown once `stage === "work_breakdown"`, or refine a technical
+  // design document once `stage === "technical_design"` - see
+  // `handleSend`'s own branching above) - which role it needs depends on
+  // which of those it would currently do. Refining a work breakdown or a
+  // technical design document both need the same `Architect` role as
+  // refining the architecture they trace back to (see
+  // app/api/routes/work_breakdown.py's `refine_work_breakdown` and
+  // app/api/routes/technical_design.py's `refine_technical_design`).
   const sendAllowed =
-    run && (run.stage === "architecture" || run.stage === "work_breakdown")
+    run &&
+    (run.stage === "architecture" ||
+      run.stage === "work_breakdown" ||
+      run.stage === "technical_design")
       ? canManageArchitecture
       : canCreateRequirements
 
@@ -557,7 +664,10 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
           onSend={handleSend}
           sendAllowed={sendAllowed}
           sendDisabledReason={
-            run && (run.stage === "architecture" || run.stage === "work_breakdown")
+            run &&
+            (run.stage === "architecture" ||
+              run.stage === "work_breakdown" ||
+              run.stage === "technical_design")
               ? "Requires the Architect role."
               : "Requires the User role."
           }
@@ -582,6 +692,13 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
           generateBreakdownLabel={busy ? "Generating work breakdown…" : "Generate work breakdown"}
           generateBreakdownAllowed={canManageArchitecture}
           generateBreakdownDisabledReason="Requires the Architect role."
+          onGenerateTechnicalDesign={handleGenerateTechnicalDesign}
+          canGenerateTechnicalDesign={canGenerateTechnicalDesign}
+          generateTechnicalDesignLabel={
+            busy ? "Generating technical design…" : "Generate technical design"
+          }
+          generateTechnicalDesignAllowed={canManageArchitecture}
+          generateTechnicalDesignDisabledReason="Requires the Architect role."
           approvalStatus={run?.approval_status ?? "pending"}
           canSend={canSend}
           placeholder={
@@ -609,6 +726,7 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
             hasArchitecture={hasArchitecture}
             architectureApproved={architectureApproved}
             hasWorkBreakdown={hasWorkBreakdown}
+            hasTechnicalDesign={hasTechnicalDesign}
             activeTab={activeTab}
             onTabChange={setActiveTab}
             currentRequirements={run?.requirements ?? null}

@@ -34,3 +34,16 @@ class WorkBreakdownExportError(ValueError):
     else recoverable is surfaced as a warning on the returned
     ``WorkBreakdownExport`` instead.
     """
+
+
+class TechnicalDesignExportError(ValueError):
+    """Raised when a technical design document fails structural
+    validation and can't be safely rendered to ``.docx``.
+
+    Raised by ``src.infrastructure.document_export.TechnicalDesignExporter``
+    - the technical-design analogue of ``WorkBreakdownExportError``. Only
+    for defects that make the document meaningless (e.g. no sections at
+    all); everything else recoverable (e.g. the diagram failing to
+    render) is surfaced as a warning on the returned
+    ``TechnicalDesignExport`` instead.
+    """

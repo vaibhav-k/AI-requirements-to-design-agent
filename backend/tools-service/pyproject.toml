@@ -18,6 +18,13 @@ warn_unused_ignores = true
 module = ["graphviz"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# python-docx ships no inline types/py.typed marker either - same
+# reasoning as the graphviz override above, needed once
+# document_export.py started calling into it.
+module = ["docx", "docx.*"]
+ignore_missing_imports = true
+
 [tool.ruff]
 line-length = 88
 target-version = "py312"

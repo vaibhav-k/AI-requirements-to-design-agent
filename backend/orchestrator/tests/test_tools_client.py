@@ -77,24 +77,34 @@ def test_validate_raises_on_failure_envelope() -> None:
 
 
 def test_generate_returns_svg_on_success() -> None:
-    async def fake_call_tool(
-        self: McpToolsClient, tool_name: str, design: SystemDesignArtifact
+    async def fake_call_payload_tool(
+        self: McpToolsClient, tool_name: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
-        return {"ok": True, "status_code": 200, "body": {"svg": "<svg></svg>"}}
+        return {
+            "ok": True,
+            "status_code": 200,
+            "body": {
+                "logical_svg": "<svg>logical</svg>",
+                "azure_mapping_svg": "<svg>azure</svg>",
+            },
+        }
 
-    with patch.object(McpToolsClient, "_call_tool", fake_call_tool):
-        assert _client().generate(_DESIGN) == "<svg></svg>"
+    with patch.object(McpToolsClient, "_call_payload_tool", fake_call_payload_tool):
+        diagrams = _client().generate(_DESIGN, 1, "2026-01-01T00:00:00+00:00")
+
+    assert diagrams.logical_svg == "<svg>logical</svg>"
+    assert diagrams.azure_mapping_svg == "<svg>azure</svg>"
 
 
 def test_generate_raises_on_failure_envelope() -> None:
-    async def fake_call_tool(
-        self: McpToolsClient, tool_name: str, design: SystemDesignArtifact
+    async def fake_call_payload_tool(
+        self: McpToolsClient, tool_name: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
         return {"ok": False, "status_code": 422, "body": {"detail": "bad design"}}
 
-    with patch.object(McpToolsClient, "_call_tool", fake_call_tool):
+    with patch.object(McpToolsClient, "_call_payload_tool", fake_call_payload_tool):
         with pytest.raises(DiagramGenerationError, match="bad design"):
-            _client().generate(_DESIGN)
+            _client().generate(_DESIGN, 1, "2026-01-01T00:00:00+00:00")
 
 
 def test_validate_works_from_inside_a_running_event_loop() -> None:
@@ -131,16 +141,25 @@ def test_validate_works_from_inside_a_running_event_loop() -> None:
 def test_generate_works_from_inside_a_running_event_loop() -> None:
     """Same regression as above, for the diagram-rendering port."""
 
-    async def fake_call_tool(
-        self: McpToolsClient, tool_name: str, design: SystemDesignArtifact
+    async def fake_call_payload_tool(
+        self: McpToolsClient, tool_name: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
-        return {"ok": True, "status_code": 200, "body": {"svg": "<svg></svg>"}}
+        return {
+            "ok": True,
+            "status_code": 200,
+            "body": {
+                "logical_svg": "<svg>logical</svg>",
+                "azure_mapping_svg": "<svg>azure</svg>",
+            },
+        }
 
     async def route_handler() -> str:
-        with patch.object(McpToolsClient, "_call_tool", fake_call_tool):
-            return _client().generate(_DESIGN)
+        with patch.object(McpToolsClient, "_call_payload_tool", fake_call_payload_tool):
+            return (
+                _client().generate(_DESIGN, 1, "2026-01-01T00:00:00+00:00").logical_svg
+            )
 
-    assert asyncio.run(route_handler()) == "<svg></svg>"
+    assert asyncio.run(route_handler()) == "<svg>logical</svg>"
 
 
 def test_export_returns_parsed_export_on_success() -> None:
