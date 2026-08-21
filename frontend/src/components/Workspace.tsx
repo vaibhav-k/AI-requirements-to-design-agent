@@ -93,6 +93,14 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
   const [busy, setBusy] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [activeTab, setActiveTab] = useState<ArtifactTab>("requirements")
+  /** Once true, the file-attach control stays hidden for the rest of this
+   * session - "attach a file" is a one-time action, not a repeatable one.
+   * Deliberately independent of `run?.source_filename`, which the backend
+   * clears the moment the *current* requirements version comes from typed
+   * text again (see `refine_run`'s comment on clearing it) - that reflects
+   * what the current version's content came from, not whether a file was
+   * ever used this session. */
+  const [hasSubmittedFile, setHasSubmittedFile] = useState(false)
 
   const appendEntry = (entry: Omit<TranscriptEntry, "id">) => {
     setTranscript((current) => [...current, { ...entry, id: nextEntryId() }])
@@ -105,6 +113,7 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
       setTranscript([])
       setStatus("idle")
       setActiveTab("requirements")
+      setHasSubmittedFile(false)
       return
     }
     let cancelled = false
@@ -117,6 +126,11 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
         if (cancelled) return
         setRun(result)
         setStatus(result.error ? "error" : "ready")
+        // A resumed session's current version may no longer show
+        // `source_filename` (a later text refine clears it), but if a file
+        // was ever behind any version we've just loaded, still treat this
+        // session as having used its one file attachment.
+        setHasSubmittedFile(Boolean(result.source_filename))
         // Jump straight to the furthest stage reached when opening a
         // session that already has one - Requirements/Architecture only
         // make sense as the default for a session that hasn't moved past
@@ -331,7 +345,7 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
   const handleSendFile = (file: File, notes?: string) => {
     appendEntry({
       role: "user",
-      content: notes ? `Scanned file: ${file.name}\n\n${notes}` : `Scanned file: ${file.name}`,
+      content: notes ? `Attached file: ${file.name}\n\n${notes}` : `Attached file: ${file.name}`,
     })
 
     if (!sessionId) {
@@ -342,6 +356,7 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
         .then((result) => {
           setRun(result)
           setStatus("ready")
+          setHasSubmittedFile(true)
           if (result.requirements) {
             appendEntry({ role: "assistant", content: summarizeRequirements(result.requirements) })
           }
@@ -351,7 +366,7 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
           setStatus("error")
           appendEntry({
             role: "assistant",
-            content: friendlyErrorMessage(err, "Could not scan the file."),
+            content: friendlyErrorMessage(err, "Could not process the attached file."),
             tone: "error",
           })
         })
@@ -366,7 +381,7 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
       appendEntry({
         role: "assistant",
         content:
-          "This session has already moved past the requirements stage; scanning a new file isn't possible here.",
+          "This session has already moved past the requirements stage; attaching a new file isn't possible here.",
       })
       return
     }
@@ -379,6 +394,7 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
         setRun(result)
         setStatus(result.error ? "error" : "ready")
         setRefreshKey((key) => key + 1)
+        setHasSubmittedFile(true)
         if (result.requirements) {
           appendEntry({ role: "assistant", content: summarizeRequirements(result.requirements) })
         }
@@ -390,7 +406,7 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
         setStatus("error")
         appendEntry({
           role: "assistant",
-          content: friendlyErrorMessage(err, "Could not scan the file."),
+          content: friendlyErrorMessage(err, "Could not process the attached file."),
           tone: "error",
         })
       })
@@ -601,7 +617,9 @@ export function Workspace({ sessionId, onSessionCreated }: WorkspaceProps) {
 
   const canSend = !busy && status !== "loading"
   const canAccept = Boolean(run && run.stage === "requirements" && run.requirements)
-  const canUploadFile = !run || run.stage === "requirements"
+  // Once a file's been attached this session, don't offer to attach another
+  // one - see `hasSubmittedFile`'s docstring above.
+  const canUploadFile = (!run || run.stage === "requirements") && !hasSubmittedFile
   const canApprove = Boolean(run && run.stage === "architecture")
   const hasRequirements = Boolean(run?.requirements)
   const hasArchitecture = Boolean(run?.design)

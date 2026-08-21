@@ -60,6 +60,15 @@ h3 {
   font-family: var(--sans);
   font-weight: 500;
   color: var(--text-h);
+  /* Without this, headings inherit :root's `font: 16px/145%` shorthand as
+   * a fixed ~23px line-height (percentage line-heights compute to an
+   * absolute length that inherits unchanged, not one that's recalculated
+   * against the child's own larger font-size). A long technical-design
+   * document title wrapping to two lines at h1 size then has less
+   * vertical room than its glyphs need, so the second line overlaps the
+   * first. A unitless line-height is instead recomputed per element
+   * against its own font-size, so it scales with each heading level. */
+  line-height: 1.3;
 }
 
 p {

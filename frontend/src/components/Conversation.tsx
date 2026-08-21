@@ -36,27 +36,27 @@ interface ConversationProps {
   /** Tooltip shown on the disabled Send button when `!sendAllowed` - e.g.
    * "Requires the Architect role." */
   readonly sendDisabledReason?: string
-  /** Upload a document (PDF/DOCX/PNG/JPG/JPEG/TXT) to be scanned for
+  /** Upload a document (PDF/DOCX/PNG/JPG/JPEG/TXT) to be analyzed for
    * requirements instead of typing them - see `app/ingestion.py`. Any text
    * currently in the textarea is passed through as `notes`, appended to the
    * extracted document text (see `start_run_from_upload`/
    * `refine_run_from_upload` in app/api/routes/requirements.py). Only
-   * offered while `canUploadFile` is true. */
+   * offered while `canUploadFile` is true. Called from `handleSubmit`, not
+   * from the file input's own `onChange` - attaching a file only stages it
+   * (see `attachedFile` below); the user still has to press Send. */
   readonly onSendFile: (file: File, notes?: string) => void
-  /** Whether the file-upload control should be shown at all - true only
+  /** Whether the file-attach control should be shown at all - true only
    * while the session is still in the requirements stage (or hasn't
-   * started yet), matching the backend's `/upload` routes, which 409 once
-   * a session has moved past `STAGE_REQUIREMENTS`. */
+   * started yet) *and* no file has been attached yet this session
+   * (`hasSubmittedFile` in Workspace.tsx) - attaching a file is a one-time
+   * action, not a repeatable one. */
   readonly canUploadFile: boolean
-  /** Whether requirements already exist for this session (`hasRequirements`
-   * in Workspace.tsx) - purely a label/copy decision, not a permissions
-   * gate: it's what tells this component whether "Scan a file" would call
-   * `start_run_from_upload` (no requirements yet) or `refine_run_from_upload`
-   * (there are some already, and the file's content is merged into them -
-   * see that route's docstring). Without this, the same "Scan a file"
-   * button re-appearing after an initial submission reads as a leftover
-   * control rather than the deliberate "scan another file to refine"
-   * action it actually is. */
+  /** Whether requirements already exist for this session - purely a
+   * tooltip/copy decision, not a permissions gate: it's what tells this
+   * component whether attaching a file would call `start_run_from_upload`
+   * (no requirements yet) or `refine_run_from_upload` (there are some
+   * already, and the file's content is merged into them - see that
+   * route's docstring). */
   readonly hasRequirements: boolean
   /** Same "grey out, don't hide" role gate as `sendAllowed`, for the
    * `User` role the `/upload` routes require. */
@@ -167,36 +167,55 @@ export function Conversation({
   sourceFilename,
 }: ConversationProps) {
   const [input, setInput] = useState("")
+  /** The file staged via "Attach a file", not yet sent - lets the input be
+   * text alone, a file alone, or both together. Cleared once actually
+   * submitted (successfully or not - `onSendFile` itself handles/reports
+   * failures, same as `onSend`). */
+  const [attachedFile, setAttachedFile] = useState<File | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Sending with an attached file is gated by `uploadAllowed` (the `User`
+  // role the upload routes require); text-only sending is gated by
+  // `sendAllowed`. Whichever applies is what decides if Send is enabled.
+  const activeSendAllowed = attachedFile ? uploadAllowed : sendAllowed
+  const activeSendDisabledReason = attachedFile ? uploadDisabledReason : sendDisabledReason
+  const hasContent = Boolean(input.trim()) || attachedFile !== null
 
   const handleSubmit = (event: React.SubmitEvent) => {
     event.preventDefault()
-    if (!input.trim() || !canSend) return
-    onSend(input.trim())
+    if (!canSend || !hasContent || !activeSendAllowed) return
+    const notes = input.trim()
+    if (attachedFile) {
+      onSendFile(attachedFile, notes || undefined)
+      setAttachedFile(null)
+    } else {
+      onSend(notes)
+    }
     setInput("")
   }
 
   const handleFileChosen = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     // Reset the input immediately so choosing the same file again (e.g.
-    // after a failed upload) still fires a change event.
+    // after removing it) still fires a change event.
     event.target.value = ""
     if (!file) return
-    onSendFile(file, input.trim() || undefined)
-    setInput("")
+    // Stage it - the user still has to press Send. Any text already typed
+    // stays put and goes along as notes.
+    setAttachedFile(file)
   }
 
-  const scanFileTitle = hasRequirements
-    ? `Scan another file (${SUPPORTED_UPLOAD_EXTENSIONS.join(", ")}) - its content is merged into the current requirements, same as typing a refinement. An image is auto-detected as a document screenshot (merged as text) or a system design diagram (redrawn as an architecture directly)`
-    : `Scan a file (${SUPPORTED_UPLOAD_EXTENSIONS.join(", ")}) instead of typing your requirements. An image is auto-detected as a document screenshot (processed as text) or a system design diagram (redrawn as an architecture directly)`
-  const uploadButtonTitle = uploadAllowed ? scanFileTitle : uploadDisabledReason
+  const attachFileTitle = hasRequirements
+    ? `Attach a file (${SUPPORTED_UPLOAD_EXTENSIONS.join(", ")}) - its content is merged into the current requirements, same as typing a refinement. An image is auto-detected as a document screenshot (merged as text) or a system design diagram (redrawn as an architecture directly)`
+    : `Attach a file (${SUPPORTED_UPLOAD_EXTENSIONS.join(", ")}) instead of typing your requirements. An image is auto-detected as a document screenshot (processed as text) or a system design diagram (redrawn as an architecture directly)`
+  const uploadButtonTitle = uploadAllowed ? attachFileTitle : uploadDisabledReason
 
   return (
     <div className="conversation">
       <div className="conversation-status">
         <span className={`status-pill status-${status}`}>{statusLabel}</span>
         {sourceFilename && (
-          <span className="source-file-pill" title="Requirements were scanned from this file">
+          <span className="source-file-pill" title="Requirements were built from this attached file">
             Source: {sourceFilename}
           </span>
         )}
@@ -228,6 +247,21 @@ export function Conversation({
       </div>
 
       <form onSubmit={handleSubmit} className="conversation-input">
+        {attachedFile && (
+          <div className="attached-file-pill">
+            <span>Attached: {attachedFile.name}</span>
+            <button
+              type="button"
+              className="attached-file-remove"
+              onClick={() => setAttachedFile(null)}
+              disabled={!canSend}
+              aria-label={`Remove attached file ${attachedFile.name}`}
+              title="Remove attached file"
+            >
+              ×
+            </button>
+          </div>
+        )}
         <textarea
           rows={3}
           value={input}
@@ -239,12 +273,12 @@ export function Conversation({
           <button
             type="submit"
             className="button-sm"
-            disabled={!canSend || !input.trim() || !sendAllowed}
-            title={!sendAllowed ? sendDisabledReason : undefined}
+            disabled={!canSend || !hasContent || !activeSendAllowed}
+            title={!activeSendAllowed ? activeSendDisabledReason : undefined}
           >
             Send
           </button>
-          {canUploadFile && (
+          {canUploadFile && !attachedFile && (
             <>
               <input
                 ref={fileInputRef}
@@ -261,7 +295,7 @@ export function Conversation({
                 disabled={!canSend || !uploadAllowed}
                 title={uploadButtonTitle}
               >
-                {hasRequirements ? "Scan another file" : "Scan a file"}
+                Attach a file
               </button>
             </>
           )}
@@ -326,7 +360,7 @@ export function Conversation({
           <p className="muted upload-hint">
             Supported file types: {SUPPORTED_UPLOAD_EXTENSIONS.join(", ")}
             {hasRequirements &&
-              " - scanning another file merges it into the current requirements, the same as typing a refinement above."}
+              " - attaching a file merges its content into the current requirements, the same as typing a refinement above."}
           </p>
         )}
       </form>

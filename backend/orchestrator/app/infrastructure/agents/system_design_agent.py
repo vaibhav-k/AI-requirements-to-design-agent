@@ -176,7 +176,11 @@ DO:
   "external_dependencies".
 - For each external dependency, identify the components that use it,
   by listing their component IDs in that dependency's own
-  "used_by_components" field.
+  "used_by_components" field. This "used_by_components" list - never an
+  interface - is the ONLY place an external dependency's ID may appear.
+  Do not also create an interface whose source_component or
+  target_component is that same dependency's ID; see the DO NOT section
+  below for why this specific mistake fails validation.
 - For every major component, actor, and external dependency, add an
   "azure_mappings" entry recommending its concrete Azure implementation:
   a real, current, official Azure service name ("azure_service"), a
@@ -225,13 +229,20 @@ DO NOT:
 - Invent detailed infrastructure beyond the Azure service
   recommendations this prompt explicitly asks for.
 - Over-engineer the solution.
-- Create an interface whose source or target is an external dependency.
-  A component's use of an external dependency (e.g. "Payment Service calls
-  the Stripe API") is captured ONLY by listing the component's ID under
-  that dependency's "used_by_components" - never as an interface. Every
-  interface's source_component and target_component must each be the ID
-  of an item in "components" or "actors"; an external dependency's ID is
-  never valid there, in either direction.
+- IMPORTANT - Create an interface whose source or target is an external
+  dependency. A component's use of an external dependency (e.g. "Payment
+  Service calls the Stripe API") is captured ONLY by listing the
+  component's ID under that dependency's "used_by_components" -
+  never as an interface. Every interface's source_component and
+  target_component must each be the ID of an item in "components" or
+  "actors"; an
+  external dependency's ID is never valid there, in either direction.
+  Before finalizing "interfaces", check every source_component and
+  target_component against the IDs actually listed in "components" and
+  "actors" - if either ID instead matches something you put in
+  "external_dependencies", that interface is invalid and must be removed
+  (the connection already exists via "used_by_components"). This exact
+  mistake fails validation and blocks the design from being accepted.
 - Invent a numeric "version" or a "last_updated" timestamp for a
   diagram, or an "author" for it - those are generated deterministically
   by the diagram-rendering code, never by you.
@@ -252,6 +263,12 @@ to take any major component from the first diagram and immediately find
 its corresponding Azure implementation on the second - this only works
 if every major component/actor/external dependency this design actually
 needs on Azure has a matching "azure_mappings" entry with the SAME id.
+
+Final check before you answer: for every interface, confirm its
+source_component and target_component each match an ID from
+"components" or "actors" - NOT from "external_dependencies". An
+external dependency's ID belongs only in that dependency's own
+"used_by_components" list.
 
 Accepted requirements:
 

@@ -54,24 +54,24 @@ setup/run/test instructions.
                      ┌─────────────────────┐
   End user (browser) │      frontend/      │  React web UI - talks only to
   ──────────────────►│                     │  backend/orchestrator's web API
-                      └──────────┬──────────┘
-                                 │ HTTPS (fetch, bearer token)
-                                 ▼
-                     ┌─────────────────────┐
-  IDE assistant /  ─► │ backend/orchestrator │  owns state + every LLM call
-  other MCP client    │                      │
-                       └──────────┬───────────┘
-                                 │ mcp.client.streamable_http
-                                 │ + mcp.ClientSession
-                                 ▼
-                     ┌─────────────────────┐
+                     └──────────┬──────────┘
+                                │ HTTPS (fetch, bearer token)
+                                ▼
+                     ┌──────────────────────┐
+  IDE assistant /  ─►│ backend/orchestrator │  owns state + every LLM call
+  other MCP client   │                      │
+                     └──────────┬───────────┘
+                                │ mcp.client.streamable_http
+                                │ + mcp.ClientSession
+                                ▼
+                     ┌──────────────────────┐
                      │ backend/mcp-wrapper  │  MCP gateway, zero business logic
                      └──────────┬───────────┘
-                                 │ httpx (plain REST)
-                                 ▼
-                     ┌─────────────────────┐
+                                │ httpx (plain REST)
+                                ▼
+                     ┌──────────────────────┐
                      │ backend/tools-service│  deterministic, zero LLM calls
-                     └─────────────────────┘
+                     └──────────────────────┘
 ```
 
 ## Local development

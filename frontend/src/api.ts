@@ -393,10 +393,15 @@ export function useRequirementsApi() {
           `/requirements-runs/${sessionId}/work-breakdown/${version}`,
         ),
 
-      exportWorkBreakdownCsv: (sessionId: string) =>
+      /** `version` should be the version currently selected in the version
+       * history (falls back to `"latest"` when nothing is selected yet) -
+       * named to match the architecture diagram downloads' `architecture-v
+       * {n}-{suffix}.png` convention rather than embedding the opaque
+       * session UUID in the filename. */
+      exportWorkBreakdownCsv: (sessionId: string, version: number | "latest") =>
         downloadFile(
           `/requirements-runs/${sessionId}/work-breakdown/export`,
-          `work-breakdown-${sessionId}.csv`,
+          `work-breakdown-v${version}.csv`,
         ),
 
       // --- Technical design (app/api/routes/technical_design.py) - the
@@ -432,10 +437,11 @@ export function useRequirementsApi() {
           `/requirements-runs/${sessionId}/technical-design/${version}`,
         ),
 
-      exportTechnicalDesignDocx: (sessionId: string) =>
+      /** Same naming rationale as `exportWorkBreakdownCsv` above. */
+      exportTechnicalDesignDocx: (sessionId: string, version: number | "latest") =>
         downloadFile(
           `/requirements-runs/${sessionId}/technical-design/export`,
-          `technical-design-${sessionId}.docx`,
+          `technical-design-v${version}.docx`,
         ),
     }),
     [request, requestText, downloadFile],
